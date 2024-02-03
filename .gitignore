@@ -396,3 +396,8 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# custom
+
+*.filters
+!3drenderer/3drenderer/meshes/*.obj
