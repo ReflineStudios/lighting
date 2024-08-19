@@ -400,4 +400,4 @@ FodyWeavers.xsd
 # custom
 
 *.filters
-!3drenderer/3drenderer/meshes/*.obj
+!lighting_test/lighting_test/meshes/*.obj
