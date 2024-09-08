@@ -77,8 +77,14 @@ struct LightSettings
     Vec4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
 };
 
+struct SceneSettings
+{
+    Vec4 color = { 0.1f, 0.1f, 0.1f, 1.0f };
+};
+
 static Camera sCamera;
 static LightSettings sLightSettings;
+static SceneSettings sSceneSettings;
 
 struct Mesh
 {
@@ -513,13 +519,23 @@ void ImguiRender()
     //ImGui::DragFloat("Intensity", &sLightSettings.intensity, 0.001f, 0.0f, 1.0f);
     ImGui::PopID();
 
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::PushID("background");
+    ImGui::Text("Scene background settings");
+    ImGui::ColorEdit3("Color", &sSceneSettings.color.x);
+    //ImGui::DragFloat("Intensity", &sLightSettings.intensity, 0.001f, 0.0f, 1.0f);
+    ImGui::PopID();
+
     ImGui::End();
 }
 
 void Render()
 {
-    float clearColor[] = { 0.1f, 0.1f, 0.1f, 1.0f };
-    gContext->ClearRenderTargetView(gBackBufferView, clearColor);
+    //float clearColor[] = { sSceneSettings.color.x, sSceneSettings.color.y, sSceneSettings.color.z, sSceneSettings.color.w };
+    gContext->ClearRenderTargetView(gBackBufferView, &sSceneSettings.color.x);
     gContext->ClearDepthStencilView(gDepthBufferView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0.0f);
 
     ImGui_ImplWin32_NewFrame();
