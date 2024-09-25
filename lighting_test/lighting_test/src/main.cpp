@@ -65,7 +65,7 @@ static Transform sModelTransform
 struct Camera
 {
     Vec3 location = { -1.38f, 1.44f, -2.0f };
-    Vec3 rotation = { 0.0f, 0.0f, 0.0f };
+    Vec3 rotation = { 0.0f, 0.0f, 1.0f };
     float FOV = 60.0f;
     float speed = 0.03f;
 };
@@ -452,7 +452,9 @@ void Update()
         DirectX::XMMatrixTranslation(sModelTransform.location.x, sModelTransform.location.y, sModelTransform.location.z);
 
     // todo: watch videos about dot, cross, etc.. with vector, goal: calculate forward vector and up vector :)
-    DirectX::XMMATRIX view = DirectX::XMMatrixLookToLH({ sCamera.location.x, sCamera.location.y, sCamera.location.z }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f, 0.0f });
+    DirectX::XMMATRIX view = DirectX::XMMatrixLookToLH({ sCamera.location.x, sCamera.location.y, sCamera.location.z },
+        { sCamera.rotation.x, sCamera.rotation.y, sCamera.rotation.z },
+        { 0.0f, 1.0f, 0.0f });
 
     DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(sCamera.FOV * TO_RADIANS, (float)gWindowWidth / (float)gWindowHeight, 0.01f, 1000.0f);
 
@@ -505,7 +507,9 @@ void ImguiRender()
     ImGui::PushID("camera");
     ImGui::Text("Camera");
     ImGui::DragFloat3("Location", &sCamera.location.x, 0.03f);
+    ImGui::DragFloat3("Direction", &sCamera.rotation.x, 0.03f);
     ImGui::DragFloat("FOV", &sCamera.FOV, 0.05f);
+    ImGui::SliderFloat("Speed", &sCamera.speed, 0.03f, 0.1f);
     ImGui::PopID();
 
     ImGui::Spacing();
