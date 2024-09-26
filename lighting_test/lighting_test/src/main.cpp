@@ -12,6 +12,12 @@
 
 #include <DirectXMath.h>
 
+
+#define BT_THREADSAFE 1
+//#define BT_USE_DOUBLE_PRECISION
+
+#include <bullet/btBulletDynamicsCommon.h>
+
 bool gAppShouldRun = true;
 
 uint32_t gWindowWidth = 1600;
@@ -30,8 +36,31 @@ ID3D11Buffer* gMVPBuffer = nullptr;
 ID3D11Buffer* gLightBuffer = nullptr;
 
 constexpr float TO_RADIANS = DirectX::XM_PI / 180.0f;
+constexpr float TO_DEGREES = 180.0f / DirectX::XM_PI;
 
 uint8_t gKeyboard[256];
+
+///collision configuration contains default setup for memory, collision setup. Advanced users can create their own configuration.
+btDefaultCollisionConfiguration* collisionConfiguration = nullptr;
+
+///use the default collision dispatcher. For parallel processing you can use a diffent dispatcher (see Extras/BulletMultiThreaded)
+btCollisionDispatcher* dispatcher = nullptr;
+
+///btDbvtBroadphase is a good general purpose broadphase. You can also try out btAxis3Sweep.
+btBroadphaseInterface* overlappingPairCache = nullptr;
+
+///the default constraint solver. For parallel processing you can use a different solver (see Extras/BulletMultiThreaded)
+btSequentialImpulseConstraintSolver* solver = nullptr;
+
+btDiscreteDynamicsWorld* dynamicsWorld = nullptr;
+
+btCollisionShape* groundPhysShape = nullptr;
+btCollisionShape* cubePhysShape = nullptr;
+
+btRigidBody* groundPhysRigidBody = nullptr;
+btRigidBody* cubePhysRigidBody = nullptr;
+
+bool simulatePhysics = false;
 
 struct MeshVertex
 {
@@ -64,8 +93,8 @@ static Transform sModelTransform
 
 struct Camera
 {
-    Vec3 location = { -1.38f, 1.44f, -2.0f };
-    Vec3 rotation = { 0.0f, 0.0f, 1.0f };
+    Vec3 location = { -1.38f, 1.44f, -9.2f };
+    Vec3 rotation = { 0.0f, 0.0f, 1.0f }; //imbardata, beccheggio, rollio, come negli aerei
     float FOV = 60.0f;
     float speed = 0.03f;
 };
@@ -405,12 +434,111 @@ void Init()
     LoadTexture("textures/negan/0.png", dummy, sMeshes[3].submeshes[0].texture);
 
     // set default mesh
-    SetMesh(0);
+    SetMesh(1);
 
     // imgui
     ImGui::CreateContext();
     ImGui_ImplWin32_Init(gWindow);
     ImGui_ImplDX11_Init(gDevice, gContext);
+
+
+    // physics
+
+    ///collision configuration contains default setup for memory, collision setup. Advanced users can create their own configuration.
+    collisionConfiguration = new btDefaultCollisionConfiguration();
+
+    ///use the default collision dispatcher. For parallel processing you can use a diffent dispatcher (see Extras/BulletMultiThreaded)
+    dispatcher = new btCollisionDispatcher(collisionConfiguration);
+
+    ///btDbvtBroadphase is a good general purpose broadphase. You can also try out btAxis3Sweep.
+    overlappingPairCache = new btDbvtBroadphase();
+
+    ///the default constraint solver. For parallel processing you can use a different solver (see Extras/BulletMultiThreaded)
+    solver = new btSequentialImpulseConstraintSolver;
+
+    dynamicsWorld = new btDiscreteDynamicsWorld(dispatcher, overlappingPairCache, solver, collisionConfiguration);
+
+    dynamicsWorld->setGravity(btVector3(0, -10, 0));
+
+    // physics ground
+    {
+        btCollisionShape* groundShape = new btBoxShape(btVector3(btScalar(50.), btScalar(.5), btScalar(50.)));
+
+       // collisionShapes.push_back(groundShape);
+
+        btTransform groundTransform;
+        groundTransform.setIdentity();
+        groundTransform.setOrigin(btVector3(0, -15, 0));
+
+        btScalar mass(0.);
+
+        //rigidbody is dynamic if and only if mass is non zero, otherwise static
+        bool isDynamic = (mass != 0.f);
+
+        btVector3 localInertia(0, 0, 0);
+        if (isDynamic)
+            groundShape->calculateLocalInertia(mass, localInertia);
+
+        //using motionstate is optional, it provides interpolation capabilities, and only synchronizes 'active' objects
+        btDefaultMotionState* myMotionState = new btDefaultMotionState(groundTransform);
+
+        btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, myMotionState, groundShape, localInertia);
+        rbInfo.m_restitution = 0.5f;
+
+        btRigidBody* body = new btRigidBody(rbInfo);
+
+       // body->setCollisionShape(groundShape);
+
+        //add the body to the dynamics world
+        dynamicsWorld->addRigidBody(body);
+
+        groundPhysShape = groundShape;
+        groundPhysRigidBody = body;
+    }
+
+    // physics cube
+    {
+        btCollisionShape* colShape = new btBoxShape( btVector3( btScalar( sModelTransform.scale.x / 2.0f ),
+                                                                btScalar(sModelTransform.scale.y / 2.0f),
+                                                                btScalar(sModelTransform.scale.z / 2.0f) ) );
+        //collisionShapes.push_back(colShape);
+
+        /// Create Dynamic Objects
+        btTransform startTransform;
+        startTransform.setIdentity();
+
+        btScalar mass(1.f);
+
+        //rigidbody is dynamic if and only if mass is non zero, otherwise static
+        bool isDynamic = (mass != 0.f);
+
+        btVector3 localInertia(0, 0, 0);
+        if (isDynamic)
+            colShape->calculateLocalInertia(mass, localInertia);
+
+        startTransform.setOrigin(btVector3(btScalar(sModelTransform.location.x), btScalar(sModelTransform.location.y), btScalar(sModelTransform.location.z)));
+        startTransform.setRotation(btQuaternion(btScalar(sModelTransform.rotation.y), btScalar(sModelTransform.rotation.x), btScalar(sModelTransform.rotation.z)));
+
+        btQuaternion t;
+        t.setRotation(btVector3(1, 0, 0), sModelTransform.rotation.x);
+        t.setRotation(btVector3(0, 1, 0), sModelTransform.rotation.y);
+        t.setRotation(btVector3(0, 0, 1), sModelTransform.rotation.z);
+
+        btScalar e1, e2, e3;
+        t.getEulerZYX(e1, e2, e3);
+
+        //using motionstate is recommended, it provides interpolation capabilities, and only synchronizes 'active' objects
+        btDefaultMotionState* myMotionState = new btDefaultMotionState(startTransform);
+        btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, myMotionState, colShape, localInertia);
+        rbInfo.m_restitution = 0.5f;
+        btRigidBody* body = new btRigidBody(rbInfo);
+
+      //  dynamicsWorld->addRigidBody(body);
+
+        cubePhysShape = colShape;
+        cubePhysRigidBody = body;
+    }
+
 }
 
 void Update()
@@ -440,6 +568,42 @@ void Update()
 
     if (gKeyboard[KEY_Q])
         sCamera.location.y -= sCamera.speed;
+
+    // physics
+
+    if (simulatePhysics)
+    {
+        dynamicsWorld->stepSimulation(1.f / 165.f, 10);
+        for (int j = dynamicsWorld->getNumCollisionObjects() - 1; j >= 0; j--)
+        {
+            btCollisionObject* obj = dynamicsWorld->getCollisionObjectArray()[j];
+            btRigidBody* body = btRigidBody::upcast(obj);
+
+            if (body->getMass())
+            {
+                btTransform trans;
+            
+                if (body && body->getMotionState())
+                {
+                    body->getMotionState()->getWorldTransform(trans);
+                }
+                else
+                {
+                    trans = obj->getWorldTransform();
+                }
+            
+                sModelTransform.location.x = trans.getOrigin().x();
+                sModelTransform.location.y = trans.getOrigin().y();
+                sModelTransform.location.z = trans.getOrigin().z();
+
+                sModelTransform.rotation.x = trans.getRotation().x();
+                sModelTransform.rotation.y = trans.getRotation().y();
+                sModelTransform.rotation.z = trans.getRotation().z();
+            }
+            //printf("world pos object %d = %f,%f,%f\n", j, float(trans.getOrigin().getX()), float(trans.getOrigin().getY()), float(trans.getOrigin().getZ()));
+        }
+    }
+
 
     // mvp
     MVPBuffer mvp;
@@ -482,6 +646,24 @@ void Update()
 void ImguiRender()
 {
     ImGui::Begin("Settings");
+
+    ImGui::PushID("physics");
+    ImGui::Text("Physics");
+
+    if (ImGui::Button("Start simulation"))
+    {
+       // btTransform startTransform;
+        //startTransform.setOrigin(btVector3(btScalar(0), btScalar(0), btScalar(0)));
+        //startTransform.setRotation(btQuaternion(btScalar(0.5), btScalar(0), btScalar(0)));
+
+        //cubePhysRigidBody->getMotionState()->setWorldTransform(startTransform);
+
+        dynamicsWorld->addRigidBody(cubePhysRigidBody);
+
+        simulatePhysics = true;
+    }
+
+    ImGui::PopID();
 
     ImGui::PushID("model");
     ImGui::Text("Model");
@@ -639,6 +821,37 @@ LRESULT WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 
 int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hInstPrev, PSTR cmdline, int cmdshow)
 {
+    btQuaternion quat;
+
+    btScalar start_deg_x = 90.0;
+    btScalar start_deg_y = 270.0;
+    btScalar start_deg_z = 45.0;
+
+    btScalar start_rad_x = start_deg_x * TO_RADIANS;
+    btScalar start_rad_y = start_deg_y * TO_RADIANS;
+    btScalar start_rad_z = start_deg_z * TO_RADIANS;
+
+    quat.setEulerZYX(start_rad_z, start_rad_y, start_rad_x);
+   
+    btScalar end_deg_x = -1.0;
+    btScalar end_deg_y = -1.0;
+    btScalar end_deg_z = -1.0;
+
+    btScalar end_rad_x = -1.0;
+    btScalar end_rad_y = -1.0;
+    btScalar end_rad_z = -1.0;
+
+    quat.getEulerZYX(end_rad_z, end_rad_y, end_rad_x);
+
+    end_deg_x = end_rad_x * TO_DEGREES;
+    end_deg_y = end_rad_y * TO_DEGREES;
+    end_deg_z = end_rad_z * TO_DEGREES;
+
+    int br = -1;
+
+
+
+
     WNDCLASSEXA wndClass = {};
     wndClass.cbSize = sizeof(WNDCLASSEXA);
     wndClass.hInstance = hInst;
