@@ -73,8 +73,13 @@ struct Camera
 struct LightSettings
 {
     Vec4 camPos;
-    Vec4 pos = { 0.9f, 0.0f, 0.6f, 1.0f };
-    Vec4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    Vec4 pos = { 0.9f, 0.0f, 0.6f };
+    Vec4 ambientColor = { 0.1f, 0.1f, 0.1f, 1.0f };
+    Vec4 lightColor = { 1.0f, 1.0f, 1.0f };
+    float ambientStrength = 0.1f;
+    float specularStrength = 0.7f;
+    float specularPow = 256;
+    float dummyPadding0;
 };
 
 static Camera sCamera;
@@ -463,7 +468,7 @@ void Update()
     gContext->Unmap(gMVPBuffer, 0);
 
     // light settings
-    sLightSettings.camPos = { sCamera.location.x, sCamera.location.y, sCamera.location.z, 1.0f };
+    sLightSettings.camPos = { sCamera.location.x, sCamera.location.y, sCamera.location.z };
 
     D3D11_MAPPED_SUBRESOURCE lightMap;
     d3dcheck(gContext->Map(gLightBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &lightMap));
@@ -509,8 +514,11 @@ void ImguiRender()
     ImGui::PushID("light");
     ImGui::Text("Light settings");
     ImGui::DragFloat3("Position", &sLightSettings.pos.x, 0.03f);
-    ImGui::ColorEdit3("Color", &sLightSettings.color.x);
-    //ImGui::DragFloat("Intensity", &sLightSettings.intensity, 0.001f, 0.0f, 1.0f);
+    ImGui::ColorEdit3("Ambient color", &sLightSettings.ambientColor.x);
+    ImGui::ColorEdit3("Light color", &sLightSettings.lightColor.x);
+    ImGui::DragFloat("Ambient intensity", &sLightSettings.ambientStrength);
+    ImGui::DragFloat("Specular intensity", &sLightSettings.specularStrength);
+    ImGui::DragFloat("Specular power", &sLightSettings.specularPow);
     ImGui::PopID();
 
     ImGui::End();
