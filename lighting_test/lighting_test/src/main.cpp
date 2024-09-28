@@ -12,6 +12,12 @@
 
 #include <DirectXMath.h>
 
+
+#define BT_THREADSAFE 1
+//#define BT_USE_DOUBLE_PRECISION
+
+#include <bullet/btBulletDynamicsCommon.h>
+
 bool gAppShouldRun = true;
 
 uint32_t gWindowWidth = 1600;
@@ -30,8 +36,31 @@ ID3D11Buffer* gMVPBuffer = nullptr;
 ID3D11Buffer* gLightBuffer = nullptr;
 
 constexpr float TO_RADIANS = DirectX::XM_PI / 180.0f;
+constexpr float TO_DEGREES = 180.0f / DirectX::XM_PI;
 
 uint8_t gKeyboard[256];
+
+///collision configuration contains default setup for memory, collision setup. Advanced users can create their own configuration.
+btDefaultCollisionConfiguration* collisionConfiguration = nullptr;
+
+///use the default collision dispatcher. For parallel processing you can use a diffent dispatcher (see Extras/BulletMultiThreaded)
+btCollisionDispatcher* dispatcher = nullptr;
+
+///btDbvtBroadphase is a good general purpose broadphase. You can also try out btAxis3Sweep.
+btBroadphaseInterface* overlappingPairCache = nullptr;
+
+///the default constraint solver. For parallel processing you can use a different solver (see Extras/BulletMultiThreaded)
+btSequentialImpulseConstraintSolver* solver = nullptr;
+
+btDiscreteDynamicsWorld* dynamicsWorld = nullptr;
+
+btCollisionShape* groundPhysShape = nullptr;
+btCollisionShape* cubePhysShape = nullptr;
+
+btRigidBody* groundPhysRigidBody = nullptr;
+btRigidBody* cubePhysRigidBody = nullptr;
+
+bool simulatePhysics = false;
 
 struct MeshVertex
 {
@@ -58,14 +87,15 @@ struct MVPBuffer
 static Transform sModelTransform
 {
     { -0.330f, -0.540f, 2.070f },   // location
-    { 0.0f, 150.0f, 0.0f },   // rotation
+    { 150.0f * TO_RADIANS, 0.0f * TO_RADIANS, 0.0f * TO_RADIANS },   // rotation
+    { 0.0f , 150.0f , 0.0f },   // rotation
     { 1.0f, 1.0f, 1.0f }    // scale
 };
 
 struct Camera
 {
-    Vec3 location = { -1.38f, 1.44f, -2.0f };
-    Vec3 rotation = { 0.0f, 0.0f, 0.0f };
+    Vec3 location = { -1.38f, 1.44f, -9.2f };
+    Vec3 rotation = { 0.0f, 0.0f, 1.0f }; //imbardata, beccheggio, rollio, come negli aerei
     float FOV = 60.0f;
     float speed = 0.03f;
 };
@@ -82,8 +112,14 @@ struct LightSettings
     float dummyPadding0;
 };
 
+struct SceneSettings
+{
+    Vec4 color = { 0.1f, 0.1f, 0.1f, 1.0f };
+};
+
 static Camera sCamera;
 static LightSettings sLightSettings;
+static SceneSettings sSceneSettings;
 
 struct Mesh
 {
@@ -404,12 +440,103 @@ void Init()
     LoadTexture("textures/negan/0.png", dummy, sMeshes[3].submeshes[0].texture);
 
     // set default mesh
-    SetMesh(0);
+    SetMesh(1);
 
     // imgui
     ImGui::CreateContext();
     ImGui_ImplWin32_Init(gWindow);
     ImGui_ImplDX11_Init(gDevice, gContext);
+
+
+    // physics
+
+    ///collision configuration contains default setup for memory, collision setup. Advanced users can create their own configuration.
+    collisionConfiguration = new btDefaultCollisionConfiguration();
+
+    ///use the default collision dispatcher. For parallel processing you can use a diffent dispatcher (see Extras/BulletMultiThreaded)
+    dispatcher = new btCollisionDispatcher(collisionConfiguration);
+
+    ///btDbvtBroadphase is a good general purpose broadphase. You can also try out btAxis3Sweep.
+    overlappingPairCache = new btDbvtBroadphase();
+
+    ///the default constraint solver. For parallel processing you can use a different solver (see Extras/BulletMultiThreaded)
+    solver = new btSequentialImpulseConstraintSolver;
+
+    dynamicsWorld = new btDiscreteDynamicsWorld(dispatcher, overlappingPairCache, solver, collisionConfiguration);
+
+    dynamicsWorld->setGravity(btVector3(0, -10, 0));
+
+    // physics ground
+    {
+        btCollisionShape* groundShape = new btBoxShape(btVector3(btScalar(50.), btScalar(.5), btScalar(50.)));
+
+       // collisionShapes.push_back(groundShape);
+
+        btTransform groundTransform;
+        groundTransform.setIdentity();
+        groundTransform.setOrigin(btVector3(0, -15, 0));
+
+        btScalar mass(0.);
+
+        //rigidbody is dynamic if and only if mass is non zero, otherwise static
+        bool isDynamic = (mass != 0.f);
+
+        btVector3 localInertia(0, 0, 0);
+        if (isDynamic)
+            groundShape->calculateLocalInertia(mass, localInertia);
+
+        //using motionstate is optional, it provides interpolation capabilities, and only synchronizes 'active' objects
+        btDefaultMotionState* myMotionState = new btDefaultMotionState(groundTransform);
+
+        btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, myMotionState, groundShape, localInertia);
+        rbInfo.m_restitution = 0.5f;
+
+        btRigidBody* body = new btRigidBody(rbInfo);
+
+       // body->setCollisionShape(groundShape);
+
+        //add the body to the dynamics world
+        dynamicsWorld->addRigidBody(body);
+
+        groundPhysShape = groundShape;
+        groundPhysRigidBody = body;
+    }
+
+    // physics cube
+    {
+        btCollisionShape* colShape = new btBoxShape( btVector3( btScalar( sModelTransform.scale.x / 2.0f ),
+                                                                btScalar(sModelTransform.scale.y / 2.0f),
+                                                                btScalar(sModelTransform.scale.z / 2.0f) ) );
+        //collisionShapes.push_back(colShape);
+
+        /// Create Dynamic Objects
+        btTransform startTransform;
+        startTransform.setIdentity();
+
+        btScalar mass(1.f);
+
+        //rigidbody is dynamic if and only if mass is non zero, otherwise static
+        bool isDynamic = (mass != 0.f);
+
+        btVector3 localInertia(0, 0, 0);
+        if (isDynamic)
+            colShape->calculateLocalInertia(mass, localInertia);
+
+        startTransform.setOrigin(btVector3(btScalar(sModelTransform.location.x), btScalar(sModelTransform.location.y), btScalar(sModelTransform.location.z)));
+        startTransform.setRotation(sModelTransform.rotation);
+
+        //using motionstate is recommended, it provides interpolation capabilities, and only synchronizes 'active' objects
+        btDefaultMotionState* myMotionState = new btDefaultMotionState(startTransform);
+        btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, myMotionState, colShape, localInertia);
+        rbInfo.m_restitution = 0.5f;
+        btRigidBody* body = new btRigidBody(rbInfo);
+
+      //  dynamicsWorld->addRigidBody(body);
+
+        cubePhysShape = colShape;
+        cubePhysRigidBody = body;
+    }
+
 }
 
 void Update()
@@ -440,18 +567,55 @@ void Update()
     if (gKeyboard[KEY_Q])
         sCamera.location.y -= sCamera.speed;
 
+    // physics
+
+    if (simulatePhysics)
+    {
+        dynamicsWorld->stepSimulation(1.f / 60.f, 10);
+        for (int j = dynamicsWorld->getNumCollisionObjects() - 1; j >= 0; j--)
+        {
+            btCollisionObject* obj = dynamicsWorld->getCollisionObjectArray()[j];
+            btRigidBody* body = btRigidBody::upcast(obj);
+
+            if (body->getMass())
+            {
+                btTransform trans;
+            
+                if (body && body->getMotionState())
+                {
+                    body->getMotionState()->getWorldTransform(trans);
+                }
+                else
+                {
+                    trans = obj->getWorldTransform();
+                }
+            
+                sModelTransform.location.x = trans.getOrigin().x();
+                sModelTransform.location.y = trans.getOrigin().y();
+                sModelTransform.location.z = trans.getOrigin().z();
+
+                sModelTransform.rotation = trans.getRotation();
+                
+            }
+            //printf("world pos object %d = %f,%f,%f\n", j, float(trans.getOrigin().getX()), float(trans.getOrigin().getY()), float(trans.getOrigin().getZ()));
+        }
+    }
+
+
     // mvp
     MVPBuffer mvp;
 
     DirectX::XMMATRIX model =
         DirectX::XMMatrixScaling(sModelTransform.scale.x, sModelTransform.scale.y, sModelTransform.scale.z)
         *
-        DirectX::XMMatrixRotationRollPitchYaw(sModelTransform.rotation.x * TO_RADIANS, sModelTransform.rotation.y * TO_RADIANS, sModelTransform.rotation.z * TO_RADIANS)
+        DirectX::XMMatrixRotationQuaternion(XMLoadFloat4(&DirectX::XMFLOAT4(sModelTransform.rotation.getX(), sModelTransform.rotation.getY(), sModelTransform.rotation.getZ(), sModelTransform.rotation.getW())))
         *
         DirectX::XMMatrixTranslation(sModelTransform.location.x, sModelTransform.location.y, sModelTransform.location.z);
 
     // todo: watch videos about dot, cross, etc.. with vector, goal: calculate forward vector and up vector :)
-    DirectX::XMMATRIX view = DirectX::XMMatrixLookToLH({ sCamera.location.x, sCamera.location.y, sCamera.location.z }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f, 0.0f });
+    DirectX::XMMATRIX view = DirectX::XMMatrixLookToLH({ sCamera.location.x, sCamera.location.y, sCamera.location.z },
+        { sCamera.rotation.x, sCamera.rotation.y, sCamera.rotation.z },
+        { 0.0f, 1.0f, 0.0f });
 
     DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(sCamera.FOV * TO_RADIANS, (float)gWindowWidth / (float)gWindowHeight, 0.01f, 1000.0f);
 
@@ -480,6 +644,24 @@ void ImguiRender()
 {
     ImGui::Begin("Settings");
 
+    ImGui::PushID("physics");
+    ImGui::Text("Physics");
+
+    if (ImGui::Button("Start simulation"))
+    {
+       // btTransform startTransform;
+        //startTransform.setOrigin(btVector3(btScalar(0), btScalar(0), btScalar(0)));
+        //startTransform.setRotation(btQuaternion(btScalar(0.5), btScalar(0), btScalar(0)));
+
+        //cubePhysRigidBody->getMotionState()->setWorldTransform(startTransform);
+
+        dynamicsWorld->addRigidBody(cubePhysRigidBody);
+
+        simulatePhysics = true;
+    }
+
+    ImGui::PopID();
+
     ImGui::PushID("model");
     ImGui::Text("Model");
     
@@ -493,7 +675,30 @@ void ImguiRender()
     }
     
     ImGui::DragFloat3("Location", &sModelTransform.location.x, 0.03f);
-    ImGui::DragFloat3("Rotation", &sModelTransform.rotation.x, 0.5f);
+
+    
+
+    //btScalar end_deg_x = -1.0;
+    //btScalar end_deg_y = -1.0;
+    //btScalar end_deg_z = -1.0;
+
+    //btScalar end_rad_x = -1.0;
+    //btScalar end_rad_y = -1.0;
+    //btScalar end_rad_z = -1.0;
+
+    //sModelTransform.rotation.getEulerZYX(end_rad_z, end_rad_y, end_rad_x);
+
+    //end_deg_x = end_rad_x * TO_DEGREES;
+    //end_deg_y = end_rad_y * TO_DEGREES;
+    //end_deg_z = end_rad_z * TO_DEGREES;
+
+    //Vec3 rot = { end_deg_x , end_deg_y , end_deg_z };
+
+
+    ImGui::DragFloat3("Rotation", &sModelTransform.eulerRotation.x, 0.5f);
+    sModelTransform.rotation.setEulerZYX(sModelTransform.eulerRotation.z * TO_RADIANS, sModelTransform.eulerRotation.y * TO_RADIANS, sModelTransform.eulerRotation.x * TO_RADIANS);
+
+
     ImGui::DragFloat3("Scale", &sModelTransform.scale.x, 0.05f);
     ImGui::PopID();
 
@@ -504,7 +709,9 @@ void ImguiRender()
     ImGui::PushID("camera");
     ImGui::Text("Camera");
     ImGui::DragFloat3("Location", &sCamera.location.x, 0.03f);
+    ImGui::DragFloat3("Direction", &sCamera.rotation.x, 0.03f);
     ImGui::DragFloat("FOV", &sCamera.FOV, 0.05f);
+    ImGui::SliderFloat("Speed", &sCamera.speed, 0.03f, 0.1f);
     ImGui::PopID();
 
     ImGui::Spacing();
@@ -521,13 +728,23 @@ void ImguiRender()
     ImGui::DragFloat("Specular power", &sLightSettings.specularPow);
     ImGui::PopID();
 
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::PushID("background");
+    ImGui::Text("Scene background settings");
+    ImGui::ColorEdit3("Color", &sSceneSettings.color.x);
+    //ImGui::DragFloat("Intensity", &sLightSettings.intensity, 0.001f, 0.0f, 1.0f);
+    ImGui::PopID();
+
     ImGui::End();
 }
 
 void Render()
 {
-    float clearColor[] = { 0.1f, 0.1f, 0.1f, 1.0f };
-    gContext->ClearRenderTargetView(gBackBufferView, clearColor);
+    //float clearColor[] = { sSceneSettings.color.x, sSceneSettings.color.y, sSceneSettings.color.z, sSceneSettings.color.w };
+    gContext->ClearRenderTargetView(gBackBufferView, &sSceneSettings.color.x);
     gContext->ClearDepthStencilView(gDepthBufferView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0.0f);
 
     ImGui_ImplWin32_NewFrame();
@@ -620,6 +837,8 @@ LRESULT WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
         case WM_CLOSE:
             gAppShouldRun = false;
             break;
+        default: 
+            break;
     }
 
     return DefWindowProcA(hWnd, Msg, wParam, lParam);
@@ -627,6 +846,37 @@ LRESULT WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 
 int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hInstPrev, PSTR cmdline, int cmdshow)
 {
+   /* btQuaternion quat;
+
+    btScalar start_deg_x = 90.0;
+    btScalar start_deg_y = 270.0;
+    btScalar start_deg_z = 45.0;
+
+    btScalar start_rad_x = start_deg_x * TO_RADIANS;
+    btScalar start_rad_y = start_deg_y * TO_RADIANS;
+    btScalar start_rad_z = start_deg_z * TO_RADIANS;
+
+    quat.setEulerZYX(start_rad_z, start_rad_y, start_rad_x);
+   
+    btScalar end_deg_x = -1.0;
+    btScalar end_deg_y = -1.0;
+    btScalar end_deg_z = -1.0;
+
+    btScalar end_rad_x = -1.0;
+    btScalar end_rad_y = -1.0;
+    btScalar end_rad_z = -1.0;
+
+    quat.getEulerZYX(end_rad_z, end_rad_y, end_rad_x);
+
+    end_deg_x = end_rad_x * TO_DEGREES;
+    end_deg_y = end_rad_y * TO_DEGREES;
+    end_deg_z = end_rad_z * TO_DEGREES;
+
+    int br = -1;
+
+    */
+
+
     WNDCLASSEXA wndClass = {};
     wndClass.cbSize = sizeof(WNDCLASSEXA);
     wndClass.hInstance = hInst;
