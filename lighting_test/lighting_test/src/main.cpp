@@ -608,7 +608,7 @@ void Update()
     DirectX::XMMATRIX model =
         DirectX::XMMatrixScaling(sModelTransform.scale.x, sModelTransform.scale.y, sModelTransform.scale.z)
         *
-        DirectX::XMMatrixRotationQuaternion(XMLoadFloat4(&DirectX::XMFLOAT4(sModelTransform.rotation.getX(), sModelTransform.rotation.getY(), sModelTransform.rotation.getZ(), sModelTransform.rotation.getW())))
+        DirectX::XMMatrixRotationQuaternion((DirectX::XMVECTOR)sModelTransform.rotation.get128())
         *
         DirectX::XMMatrixTranslation(sModelTransform.location.x, sModelTransform.location.y, sModelTransform.location.z);
 
