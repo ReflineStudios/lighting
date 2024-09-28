@@ -87,7 +87,8 @@ struct MVPBuffer
 static Transform sModelTransform
 {
     { -0.330f, -0.540f, 2.070f },   // location
-    { 0.0f, 150.0f, 0.0f },   // rotation
+    { 150.0f * TO_RADIANS, 0.0f * TO_RADIANS, 0.0f * TO_RADIANS },   // rotation
+    { 0.0f , 150.0f , 0.0f },   // rotation
     { 1.0f, 1.0f, 1.0f }    // scale
 };
 
@@ -517,15 +518,7 @@ void Init()
             colShape->calculateLocalInertia(mass, localInertia);
 
         startTransform.setOrigin(btVector3(btScalar(sModelTransform.location.x), btScalar(sModelTransform.location.y), btScalar(sModelTransform.location.z)));
-        startTransform.setRotation(btQuaternion(btScalar(sModelTransform.rotation.y), btScalar(sModelTransform.rotation.x), btScalar(sModelTransform.rotation.z)));
-
-        btQuaternion t;
-        t.setRotation(btVector3(1, 0, 0), sModelTransform.rotation.x);
-        t.setRotation(btVector3(0, 1, 0), sModelTransform.rotation.y);
-        t.setRotation(btVector3(0, 0, 1), sModelTransform.rotation.z);
-
-        btScalar e1, e2, e3;
-        t.getEulerZYX(e1, e2, e3);
+        startTransform.setRotation(sModelTransform.rotation);
 
         //using motionstate is recommended, it provides interpolation capabilities, and only synchronizes 'active' objects
         btDefaultMotionState* myMotionState = new btDefaultMotionState(startTransform);
@@ -573,7 +566,7 @@ void Update()
 
     if (simulatePhysics)
     {
-        dynamicsWorld->stepSimulation(1.f / 165.f, 10);
+        dynamicsWorld->stepSimulation(1.f / 60.f, 10);
         for (int j = dynamicsWorld->getNumCollisionObjects() - 1; j >= 0; j--)
         {
             btCollisionObject* obj = dynamicsWorld->getCollisionObjectArray()[j];
@@ -596,9 +589,8 @@ void Update()
                 sModelTransform.location.y = trans.getOrigin().y();
                 sModelTransform.location.z = trans.getOrigin().z();
 
-                sModelTransform.rotation.x = trans.getRotation().x();
-                sModelTransform.rotation.y = trans.getRotation().y();
-                sModelTransform.rotation.z = trans.getRotation().z();
+                sModelTransform.rotation = trans.getRotation();
+                
             }
             //printf("world pos object %d = %f,%f,%f\n", j, float(trans.getOrigin().getX()), float(trans.getOrigin().getY()), float(trans.getOrigin().getZ()));
         }
@@ -611,7 +603,7 @@ void Update()
     DirectX::XMMATRIX model =
         DirectX::XMMatrixScaling(sModelTransform.scale.x, sModelTransform.scale.y, sModelTransform.scale.z)
         *
-        DirectX::XMMatrixRotationRollPitchYaw(sModelTransform.rotation.x * TO_RADIANS, sModelTransform.rotation.y * TO_RADIANS, sModelTransform.rotation.z * TO_RADIANS)
+        DirectX::XMMatrixRotationQuaternion(XMLoadFloat4(&DirectX::XMFLOAT4(sModelTransform.rotation.getX(), sModelTransform.rotation.getY(), sModelTransform.rotation.getZ(), sModelTransform.rotation.getW())))
         *
         DirectX::XMMatrixTranslation(sModelTransform.location.x, sModelTransform.location.y, sModelTransform.location.z);
 
@@ -678,7 +670,30 @@ void ImguiRender()
     }
     
     ImGui::DragFloat3("Location", &sModelTransform.location.x, 0.03f);
-    ImGui::DragFloat3("Rotation", &sModelTransform.rotation.x, 0.5f);
+
+    
+
+    //btScalar end_deg_x = -1.0;
+    //btScalar end_deg_y = -1.0;
+    //btScalar end_deg_z = -1.0;
+
+    //btScalar end_rad_x = -1.0;
+    //btScalar end_rad_y = -1.0;
+    //btScalar end_rad_z = -1.0;
+
+    //sModelTransform.rotation.getEulerZYX(end_rad_z, end_rad_y, end_rad_x);
+
+    //end_deg_x = end_rad_x * TO_DEGREES;
+    //end_deg_y = end_rad_y * TO_DEGREES;
+    //end_deg_z = end_rad_z * TO_DEGREES;
+
+    //Vec3 rot = { end_deg_x , end_deg_y , end_deg_z };
+
+
+    ImGui::DragFloat3("Rotation", &sModelTransform.eulerRotation.x, 0.5f);
+    sModelTransform.rotation.setEulerZYX(sModelTransform.eulerRotation.z * TO_RADIANS, sModelTransform.eulerRotation.y * TO_RADIANS, sModelTransform.eulerRotation.x * TO_RADIANS);
+
+
     ImGui::DragFloat3("Scale", &sModelTransform.scale.x, 0.05f);
     ImGui::PopID();
 
@@ -814,6 +829,8 @@ LRESULT WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
         case WM_CLOSE:
             gAppShouldRun = false;
             break;
+        default: 
+            break;
     }
 
     return DefWindowProcA(hWnd, Msg, wParam, lParam);
@@ -821,7 +838,7 @@ LRESULT WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 
 int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hInstPrev, PSTR cmdline, int cmdshow)
 {
-    btQuaternion quat;
+   /* btQuaternion quat;
 
     btScalar start_deg_x = 90.0;
     btScalar start_deg_y = 270.0;
@@ -849,7 +866,7 @@ int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hInstPrev, PSTR cmdline, int cmd
 
     int br = -1;
 
-
+    */
 
 
     WNDCLASSEXA wndClass = {};
