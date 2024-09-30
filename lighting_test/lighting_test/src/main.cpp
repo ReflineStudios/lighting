@@ -326,7 +326,7 @@ void Init()
     depthDesc.SampleDesc.Count = 1;
 
     ID3D11Texture2D* depthBuffer;
-    d3dcheck(gDevice->CreateTexture2D(&depthDesc, nullptr, &depthBuffer));
+    d3dcheck(gDevice->CreateTexture2D(&depthDesc, nullptr, &depthBuffer));  
     d3dcheck(gDevice->CreateDepthStencilView(depthBuffer, nullptr, &gDepthBufferView));
     depthBuffer->Release();
 
@@ -468,7 +468,7 @@ void Init()
 
     // physics ground
     {
-        btCollisionShape* groundShape = new btBoxShape(btVector3(btScalar(50.), btScalar(.5), btScalar(50.)));
+        btCollisionShape* groundShape = new btBoxShape(btVector3(50., .5, 50.));
 
        // collisionShapes.push_back(groundShape);
 
@@ -504,9 +504,9 @@ void Init()
 
     // physics cube
     {
-        btCollisionShape* colShape = new btBoxShape( btVector3( btScalar( sModelTransform.scale.x / 2.0f ),
-                                                                btScalar(sModelTransform.scale.y / 2.0f),
-                                                                btScalar(sModelTransform.scale.z / 2.0f) ) );
+        btCollisionShape* colShape = new btBoxShape( btVector3( sModelTransform.scale.x / 2.0f,
+                                                                sModelTransform.scale.y / 2.0f,
+                                                                sModelTransform.scale.z / 2.0f ) );
         //collisionShapes.push_back(colShape);
 
         /// Create Dynamic Objects
@@ -548,6 +548,9 @@ void Update()
     constexpr uint8_t KEY_D = 0x44;
     constexpr uint8_t KEY_Q = 0x51;
     constexpr uint8_t KEY_E = 0x45;
+    constexpr uint8_t KEY_SPACE = 0x20;
+    constexpr uint8_t KEY_SHIFT = 0xA0;
+
 
     if (gKeyboard[KEY_W])
         sCamera.location.z += sCamera.speed;
@@ -565,6 +568,12 @@ void Update()
         sCamera.location.y += sCamera.speed;
 
     if (gKeyboard[KEY_Q])
+        sCamera.location.y -= sCamera.speed;
+
+    if (gKeyboard[KEY_SPACE])
+        sCamera.location.y += sCamera.speed;
+
+    if (gKeyboard[KEY_SHIFT])
         sCamera.location.y -= sCamera.speed;
 
     // physics
@@ -595,7 +604,6 @@ void Update()
                 sModelTransform.location.z = trans.getOrigin().z();
 
                 sModelTransform.rotation = trans.getRotation();
-                
             }
             //printf("world pos object %d = %f,%f,%f\n", j, float(trans.getOrigin().getX()), float(trans.getOrigin().getY()), float(trans.getOrigin().getZ()));
         }
@@ -608,7 +616,7 @@ void Update()
     DirectX::XMMATRIX model =
         DirectX::XMMatrixScaling(sModelTransform.scale.x, sModelTransform.scale.y, sModelTransform.scale.z)
         *
-        DirectX::XMMatrixRotationQuaternion((DirectX::XMVECTOR)sModelTransform.rotation.get128())
+        DirectX::XMMatrixRotationQuaternion(sModelTransform.rotation.get128())
         *
         DirectX::XMMatrixTranslation(sModelTransform.location.x, sModelTransform.location.y, sModelTransform.location.z);
 
@@ -649,6 +657,16 @@ void ImguiRender()
 
     if (ImGui::Button("Start simulation"))
     {
+        btTransform startTransform;
+        startTransform.setIdentity();
+
+        startTransform.setOrigin(btVector3(sModelTransform.location.x, sModelTransform.location.y, sModelTransform.location.z));
+        startTransform.setRotation(sModelTransform.rotation);
+
+        cubePhysRigidBody->setWorldTransform(startTransform);
+
+
+
        // btTransform startTransform;
         //startTransform.setOrigin(btVector3(btScalar(0), btScalar(0), btScalar(0)));
         //startTransform.setRotation(btQuaternion(btScalar(0.5), btScalar(0), btScalar(0)));
@@ -675,24 +693,6 @@ void ImguiRender()
     }
     
     ImGui::DragFloat3("Location", &sModelTransform.location.x, 0.03f);
-
-    
-
-    //btScalar end_deg_x = -1.0;
-    //btScalar end_deg_y = -1.0;
-    //btScalar end_deg_z = -1.0;
-
-    //btScalar end_rad_x = -1.0;
-    //btScalar end_rad_y = -1.0;
-    //btScalar end_rad_z = -1.0;
-
-    //sModelTransform.rotation.getEulerZYX(end_rad_z, end_rad_y, end_rad_x);
-
-    //end_deg_x = end_rad_x * TO_DEGREES;
-    //end_deg_y = end_rad_y * TO_DEGREES;
-    //end_deg_z = end_rad_z * TO_DEGREES;
-
-    //Vec3 rot = { end_deg_x , end_deg_y , end_deg_z };
 
 
     ImGui::DragFloat3("Rotation", &sModelTransform.eulerRotation.x, 0.5f);
@@ -846,37 +846,6 @@ LRESULT WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 
 int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hInstPrev, PSTR cmdline, int cmdshow)
 {
-   /* btQuaternion quat;
-
-    btScalar start_deg_x = 90.0;
-    btScalar start_deg_y = 270.0;
-    btScalar start_deg_z = 45.0;
-
-    btScalar start_rad_x = start_deg_x * TO_RADIANS;
-    btScalar start_rad_y = start_deg_y * TO_RADIANS;
-    btScalar start_rad_z = start_deg_z * TO_RADIANS;
-
-    quat.setEulerZYX(start_rad_z, start_rad_y, start_rad_x);
-   
-    btScalar end_deg_x = -1.0;
-    btScalar end_deg_y = -1.0;
-    btScalar end_deg_z = -1.0;
-
-    btScalar end_rad_x = -1.0;
-    btScalar end_rad_y = -1.0;
-    btScalar end_rad_z = -1.0;
-
-    quat.getEulerZYX(end_rad_z, end_rad_y, end_rad_x);
-
-    end_deg_x = end_rad_x * TO_DEGREES;
-    end_deg_y = end_rad_y * TO_DEGREES;
-    end_deg_z = end_rad_z * TO_DEGREES;
-
-    int br = -1;
-
-    */
-
-
     WNDCLASSEXA wndClass = {};
     wndClass.cbSize = sizeof(WNDCLASSEXA);
     wndClass.hInstance = hInst;
