@@ -94,7 +94,7 @@ static Transform sModelTransform
 
 struct Camera
 {
-    Vec3 location = { -1.38f, 1.44f, -9.2f };
+    Vec3 location = { -1.38f, -2.44f, -29.2f };
     Vec3 rotation = { 0.0f, 0.0f, 1.0f }; //imbardata, beccheggio, rollio, come negli aerei
     float FOV = 60.0f;
     float speed = 0.03f;
@@ -468,13 +468,18 @@ void Init()
 
     // physics ground
     {
-        btCollisionShape* groundShape = new btBoxShape(btVector3(50., .5, 50.));
+        btCollisionShape* groundShape = new btBoxShape(btVector3(10, 0.5, 10));
 
        // collisionShapes.push_back(groundShape);
 
         btTransform groundTransform;
         groundTransform.setIdentity();
-        groundTransform.setOrigin(btVector3(0, -15, 0));
+        groundTransform.setOrigin(btVector3(0, -4, 0));
+
+        btQuaternion groundRot;
+        groundRot.setEulerZYX( -20 * TO_RADIANS, 0 * TO_RADIANS, 0 * TO_RADIANS);
+
+        groundTransform.setRotation(groundRot);
 
         btScalar mass(0.);
 
@@ -604,6 +609,21 @@ void Update()
                 sModelTransform.location.z = trans.getOrigin().z();
 
                 sModelTransform.rotation = trans.getRotation();
+
+                static Vec3 prevRot = {};
+
+                Vec3 newRot = {};
+                sModelTransform.rotation.getEulerZYX(newRot.z, newRot.y, newRot.x);
+
+                Vec3 deltaRot = { newRot.x - prevRot.x, newRot.y - prevRot.y, newRot.z - prevRot.z };
+
+
+                sModelTransform.eulerRotation.x += deltaRot.x;
+                sModelTransform.eulerRotation.y += deltaRot.y;
+                sModelTransform.eulerRotation.z += deltaRot.z;
+ 
+                prevRot = newRot;
+
             }
             //printf("world pos object %d = %f,%f,%f\n", j, float(trans.getOrigin().getX()), float(trans.getOrigin().getY()), float(trans.getOrigin().getZ()));
         }
