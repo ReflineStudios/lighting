@@ -35,6 +35,12 @@ ID3D11DepthStencilView* gDepthBufferView = nullptr;
 ID3D11Buffer* gMVPBuffer = nullptr;
 ID3D11Buffer* gLightBuffer = nullptr;
 
+ID3D11RasterizerState* gRasterStateDefault = nullptr;
+ID3D11RasterizerState* gRasterStateWireframe = nullptr;
+
+ID3D11PixelShader* gPixelShaderDefault = nullptr;
+ID3D11PixelShader* gPixelShaderCollider = nullptr;
+
 constexpr float TO_RADIANS = DirectX::XM_PI / 180.0f;
 constexpr float TO_DEGREES = 180.0f / DirectX::XM_PI;
 
@@ -61,6 +67,8 @@ btRigidBody* groundPhysRigidBody = nullptr;
 btRigidBody* cubePhysRigidBody = nullptr;
 
 bool simulatePhysics = false;
+
+constexpr uint32_t COLLIDER_MESH_INDEX = 4;
 
 struct MeshVertex
 {
@@ -124,6 +132,8 @@ static SceneSettings sSceneSettings;
 struct Mesh
 {
     std::vector<SubMeshData> submeshes;
+    std::vector<MeshVertex> vertices;
+    std::vector<uint32_t> indices;
     std::string debugName;
     ID3D11Buffer* vertexBuffer;
     ID3D11Buffer* indexBuffer;
@@ -241,6 +251,9 @@ void LoadMesh(const std::string& meshPath, Mesh& outMesh)
     outMesh.indexBuffer = indexBuffer;
     outMesh.submeshes = std::move(submeshes);
     outMesh.debugName = meshPath;
+
+    outMesh.vertices = vertices;
+    outMesh.indices = indices;
 }
 
 void CreateTexture(uint32_t width, uint32_t height, void* data, ID3D11Texture2D*& outTexture, ID3D11ShaderResourceView*& outResource)
@@ -271,19 +284,6 @@ void LoadTexture(const std::string& texturePath, ID3D11Texture2D*& outTexture, I
     CreateTexture((uint32_t)x, (uint32_t)y, img, outTexture, outResource);
 
     stbi_image_free(img);
-}
-
-void SetMesh(uint32_t meshIndex)
-{
-    const Mesh& mesh = sMeshes[meshIndex];
-
-    uint32_t strides[] = { sizeof(MeshVertex) };
-    uint32_t offsets[] = { 0 };
-    gContext->IASetVertexBuffers(0, 1, &mesh.vertexBuffer, strides, offsets);
-
-    gContext->IASetIndexBuffer(mesh.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
-
-    sMeshIndex = meshIndex;
 }
 
 void Init()
@@ -332,34 +332,48 @@ void Init()
 
     // shaders
     ID3D11VertexShader* vertexShader;
-    ID3D11PixelShader* pixelShader;
     ID3D11InputLayout* inputLayout;
 
-    ID3DBlob* vsBlob;
-    d3dcheck(D3DCompileFromFile(L"shaders/vertex.hlsl", nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsBlob, nullptr));
-    d3dcheck(gDevice->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vertexShader));
+    // vertex shader
+    {
 
-    ID3DBlob* psBlob;
-    d3dcheck(D3DCompileFromFile(L"shaders/pixel.hlsl", nullptr, nullptr, "main", "ps_5_0", 0, 0, &psBlob, nullptr));
-    d3dcheck(gDevice->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &pixelShader));
-    psBlob->Release();
+        ID3DBlob* vsBlob;
+        d3dcheck(D3DCompileFromFile(L"shaders/vertex.hlsl", nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsBlob, nullptr));
+        d3dcheck(gDevice->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vertexShader));
 
-    D3D11_INPUT_ELEMENT_DESC inputs[3] = {};
+        D3D11_INPUT_ELEMENT_DESC inputs[3] = {};
 
-    inputs[0].SemanticName = "POS";
-    inputs[0].Format = DXGI_FORMAT_R32G32B32_FLOAT;
-    inputs[0].AlignedByteOffset = 0;
+        inputs[0].SemanticName = "POS";
+        inputs[0].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+        inputs[0].AlignedByteOffset = 0;
 
-    inputs[1].SemanticName = "NORMAL";
-    inputs[1].Format = DXGI_FORMAT_R32G32B32_FLOAT;
-    inputs[1].AlignedByteOffset = 12;
+        inputs[1].SemanticName = "NORMAL";
+        inputs[1].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+        inputs[1].AlignedByteOffset = 12;
 
-    inputs[2].SemanticName = "TEX_COORDS";
-    inputs[2].Format = DXGI_FORMAT_R32G32_FLOAT;
-    inputs[2].AlignedByteOffset = 24;
+        inputs[2].SemanticName = "TEX_COORDS";
+        inputs[2].Format = DXGI_FORMAT_R32G32_FLOAT;
+        inputs[2].AlignedByteOffset = 24;
 
-    d3dcheck(gDevice->CreateInputLayout(inputs, sizeof(inputs) / sizeof(D3D11_INPUT_ELEMENT_DESC), vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &inputLayout));
-    vsBlob->Release();
+        d3dcheck(gDevice->CreateInputLayout(inputs, sizeof(inputs) / sizeof(D3D11_INPUT_ELEMENT_DESC), vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &inputLayout));
+        vsBlob->Release();
+    }
+
+    // default pixel
+    {
+        ID3DBlob* psBlob;
+        d3dcheck(D3DCompileFromFile(L"shaders/pixel.hlsl", nullptr, nullptr, "main", "ps_5_0", 0, 0, &psBlob, nullptr));
+        d3dcheck(gDevice->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &gPixelShaderDefault));
+        psBlob->Release();
+    }
+
+    // collider pixel
+    {
+        ID3DBlob* psBlob;
+        d3dcheck(D3DCompileFromFile(L"shaders/pixel_collider.hlsl", nullptr, nullptr, "main", "ps_5_0", 0, 0, &psBlob, nullptr));
+        d3dcheck(gDevice->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &gPixelShaderCollider));
+        psBlob->Release();
+    }
 
     // sampler for textures
     ID3D11SamplerState* sampler;
@@ -374,6 +388,26 @@ void Init()
     samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
     gDevice->CreateSamplerState(&samplerDesc, &sampler);
+
+    // rasterizer state
+    D3D11_RASTERIZER_DESC rasterDesc = {};
+
+    rasterDesc.FrontCounterClockwise = false;
+    rasterDesc.DepthBias = 0;
+    rasterDesc.SlopeScaledDepthBias = 0.0f;
+    rasterDesc.DepthBiasClamp = 0.0f;
+    rasterDesc.DepthClipEnable = true;
+    rasterDesc.ScissorEnable = false;
+    rasterDesc.MultisampleEnable = false;
+    rasterDesc.AntialiasedLineEnable = false;
+
+    rasterDesc.FillMode = D3D11_FILL_SOLID;
+    rasterDesc.CullMode = D3D11_CULL_BACK;      // DEFAULT
+    d3dcheck(gDevice->CreateRasterizerState(&rasterDesc, &gRasterStateDefault));
+
+    rasterDesc.FillMode = D3D11_FILL_WIREFRAME;
+    rasterDesc.CullMode = D3D11_CULL_NONE;      // WIREFRAME (colliders)
+    d3dcheck(gDevice->CreateRasterizerState(&rasterDesc, &gRasterStateWireframe));
 
     // mvp buffer
     D3D11_BUFFER_DESC mvpBufferDesc = {};
@@ -397,7 +431,6 @@ void Init()
     gContext->OMSetRenderTargets(1, &gBackBufferView, gDepthBufferView);
 
     gContext->VSSetShader(vertexShader, nullptr, 0);
-    gContext->PSSetShader(pixelShader, nullptr, 0);
     gContext->IASetInputLayout(inputLayout);
 
     gContext->VSSetConstantBuffers(0, 1, &gMVPBuffer);
@@ -420,6 +453,7 @@ void Init()
     LoadMesh("meshes/cube.obj", sMeshes.emplace_back());
     LoadMesh("meshes/lamp.obj", sMeshes.emplace_back());
     LoadMesh("meshes/negan.obj", sMeshes.emplace_back());
+    LoadMesh("meshes/terrain.obj", sMeshes.emplace_back());
 
     // load textures
     ID3D11Texture2D* dummy;
@@ -433,14 +467,18 @@ void Init()
     LoadTexture("textures/dbd/7.png", dummy, sMeshes[0].submeshes[7].texture);
 
     uint32_t whiteTexture = 0xffffffff;
-    CreateTexture(1, 1, &whiteTexture, dummy, sMeshes[1].submeshes[0].texture);
+    ID3D11ShaderResourceView* whiteTextRes;
+    CreateTexture(1, 1, &whiteTexture, dummy, whiteTextRes);
 
     LoadTexture("textures/lamp/0.jpg", dummy, sMeshes[2].submeshes[0].texture);
 
     LoadTexture("textures/negan/0.png", dummy, sMeshes[3].submeshes[0].texture);
 
+    sMeshes[1].submeshes[0].texture = whiteTextRes;
+    sMeshes[4].submeshes[0].texture = whiteTextRes;
+
     // set default mesh
-    SetMesh(1);
+    sMeshIndex = 1;
 
     // imgui
     ImGui::CreateContext();
@@ -466,59 +504,62 @@ void Init()
 
     dynamicsWorld->setGravity(btVector3(0, -10, 0));
 
-    // physics ground
+    // physics - terrain
+
+    if constexpr (COLLIDER_MESH_INDEX == 4)
     {
-        btCollisionShape* groundShape = new btBoxShape(btVector3(10, 0.5, 10));
+        btTriangleMesh* triangleMesh = new btTriangleMesh();
 
-       // collisionShapes.push_back(groundShape);
+        const std::vector<MeshVertex>& vertices = sMeshes[COLLIDER_MESH_INDEX].vertices;
+        const std::vector<uint32_t>& indices = sMeshes[COLLIDER_MESH_INDEX].indices;
 
-        btTransform groundTransform;
-        groundTransform.setIdentity();
-        groundTransform.setOrigin(btVector3(0, -4, 0));
+        for (uint32_t i = 0; i < indices.size(); i += 3)
+        {
+            const MeshVertex& v1 = vertices[indices[i + 0]];
+            const MeshVertex& v2 = vertices[indices[i + 1]];
+            const MeshVertex& v3 = vertices[indices[i + 2]];
 
-        btQuaternion groundRot;
-        groundRot.setEulerZYX( -20 * TO_RADIANS, 0 * TO_RADIANS, 0 * TO_RADIANS);
+            triangleMesh->addTriangle
+            (
+                btVector3(v1.pos.x, v1.pos.y, v1.pos.z),
+                btVector3(v2.pos.x, v2.pos.y, v2.pos.z),
+                btVector3(v3.pos.x, v3.pos.y, v3.pos.z)
+            );
+        }
 
-        groundTransform.setRotation(groundRot);
+        btBvhTriangleMeshShape* triangleShape = new btBvhTriangleMeshShape(triangleMesh, false);
 
-        btScalar mass(0.);
+        btTransform t;
+        t.setIdentity();
+        t.setOrigin(btVector3(0, 0, 0));
 
-        //rigidbody is dynamic if and only if mass is non zero, otherwise static
-        bool isDynamic = (mass != 0.f);
+        btDefaultMotionState* motion = new btDefaultMotionState(t);
 
-        btVector3 localInertia(0, 0, 0);
-        if (isDynamic)
-            groundShape->calculateLocalInertia(mass, localInertia);
+        // Create the rigid body as before
+        btRigidBody::btRigidBodyConstructionInfo info(0.0, motion, triangleShape, btVector3(0, 0, 0));
+        info.m_friction = 3.0f;
 
-        //using motionstate is optional, it provides interpolation capabilities, and only synchronizes 'active' objects
-        btDefaultMotionState* myMotionState = new btDefaultMotionState(groundTransform);
+        btRigidBody* meshRigidBody = new btRigidBody(info);
 
-        btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, myMotionState, groundShape, localInertia);
-        rbInfo.m_restitution = 0.5f;
+        triangleShape->setLocalScaling(btVector3(1, 1, 1));
 
-        btRigidBody* body = new btRigidBody(rbInfo);
+        dynamicsWorld->addRigidBody(meshRigidBody);
 
-       // body->setCollisionShape(groundShape);
+        groundPhysShape = triangleShape;
+        groundPhysRigidBody = meshRigidBody;
 
-        //add the body to the dynamics world
-        dynamicsWorld->addRigidBody(body);
-
-        groundPhysShape = groundShape;
-        groundPhysRigidBody = body;
     }
-
-    // physics cube
+    else
     {
-        btCollisionShape* colShape = new btBoxShape( btVector3( sModelTransform.scale.x / 2.0f,
-                                                                sModelTransform.scale.y / 2.0f,
-                                                                sModelTransform.scale.z / 2.0f ) );
+        btCollisionShape* colShape = new btBoxShape({ 0.5f, 0.5f, 0.5f });
         //collisionShapes.push_back(colShape);
 
         /// Create Dynamic Objects
         btTransform startTransform;
         startTransform.setIdentity();
+        startTransform.setOrigin({ 0, -2, 0 });
 
-        btScalar mass(1.f);
+        btScalar mass(0.f);
 
         //rigidbody is dynamic if and only if mass is non zero, otherwise static
         bool isDynamic = (mass != 0.f);
@@ -527,8 +568,7 @@ void Init()
         if (isDynamic)
             colShape->calculateLocalInertia(mass, localInertia);
 
-        startTransform.setOrigin(btVector3(btScalar(sModelTransform.location.x), btScalar(sModelTransform.location.y), btScalar(sModelTransform.location.z)));
-        startTransform.setRotation(sModelTransform.rotation);
+        colShape->setLocalScaling(btVector3(1, 1, 1));
 
         //using motionstate is recommended, it provides interpolation capabilities, and only synchronizes 'active' objects
         btDefaultMotionState* myMotionState = new btDefaultMotionState(startTransform);
@@ -536,12 +576,11 @@ void Init()
         rbInfo.m_restitution = 0.5f;
         btRigidBody* body = new btRigidBody(rbInfo);
 
-      //  dynamicsWorld->addRigidBody(body);
+        dynamicsWorld->addRigidBody(body);
 
-        cubePhysShape = colShape;
-        cubePhysRigidBody = body;
+        groundPhysShape = colShape;
+        groundPhysRigidBody = body;
     }
-
 }
 
 void Update()
@@ -628,44 +667,6 @@ void Update()
             //printf("world pos object %d = %f,%f,%f\n", j, float(trans.getOrigin().getX()), float(trans.getOrigin().getY()), float(trans.getOrigin().getZ()));
         }
     }
-
-
-    // mvp
-    MVPBuffer mvp;
-
-    DirectX::XMMATRIX model =
-        DirectX::XMMatrixScaling(sModelTransform.scale.x, sModelTransform.scale.y, sModelTransform.scale.z)
-        *
-        DirectX::XMMatrixRotationQuaternion(sModelTransform.rotation.get128())
-        *
-        DirectX::XMMatrixTranslation(sModelTransform.location.x, sModelTransform.location.y, sModelTransform.location.z);
-
-    // todo: watch videos about dot, cross, etc.. with vector, goal: calculate forward vector and up vector :)
-    DirectX::XMMATRIX view = DirectX::XMMatrixLookToLH({ sCamera.location.x, sCamera.location.y, sCamera.location.z },
-        { sCamera.rotation.x, sCamera.rotation.y, sCamera.rotation.z },
-        { 0.0f, 1.0f, 0.0f });
-
-    DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(sCamera.FOV * TO_RADIANS, (float)gWindowWidth / (float)gWindowHeight, 0.01f, 1000.0f);
-
-    // shaders use column major, lets transpose
-    mvp.model = DirectX::XMMatrixTranspose(model);
-    mvp.view = DirectX::XMMatrixTranspose(view);
-    mvp.proj = DirectX::XMMatrixTranspose(proj);
-
-    mvp.inverseModel = DirectX::XMMatrixInverse(nullptr, model); // not transposed!
-
-    D3D11_MAPPED_SUBRESOURCE mvpMap;
-    d3dcheck(gContext->Map(gMVPBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mvpMap));
-    memcpy(mvpMap.pData, &mvp, sizeof(MVPBuffer));
-    gContext->Unmap(gMVPBuffer, 0);
-
-    // light settings
-    sLightSettings.camPos = { sCamera.location.x, sCamera.location.y, sCamera.location.z };
-
-    D3D11_MAPPED_SUBRESOURCE lightMap;
-    d3dcheck(gContext->Map(gLightBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &lightMap));
-    memcpy(lightMap.pData, &sLightSettings, sizeof(LightSettings));
-    gContext->Unmap(gLightBuffer, 0);
 }
 
 void ImguiRender()
@@ -677,24 +678,93 @@ void ImguiRender()
 
     if (ImGui::Button("Start simulation"))
     {
-        btTransform startTransform;
-        startTransform.setIdentity();
+        // "player" collider
+        {
+#if 1
+            btCollisionShape* colShape = new btBoxShape(btVector3(sModelTransform.scale.x / 2.0f,
+                sModelTransform.scale.y / 2.0f,
+                sModelTransform.scale.z / 2.0f));
+            //collisionShapes.push_back(colShape);
 
-        startTransform.setOrigin(btVector3(sModelTransform.location.x, sModelTransform.location.y, sModelTransform.location.z));
-        startTransform.setRotation(sModelTransform.rotation);
+            /// Create Dynamic Objects
+            btTransform startTransform;
+            startTransform.setIdentity();
 
-        cubePhysRigidBody->setWorldTransform(startTransform);
+            btScalar mass(1.f);
 
+            //rigidbody is dynamic if and only if mass is non zero, otherwise static
+            bool isDynamic = (mass != 0.f);
 
+            btVector3 localInertia(0, 0, 0);
+            if (isDynamic)
+                colShape->calculateLocalInertia(mass, localInertia);
 
-       // btTransform startTransform;
-        //startTransform.setOrigin(btVector3(btScalar(0), btScalar(0), btScalar(0)));
-        //startTransform.setRotation(btQuaternion(btScalar(0.5), btScalar(0), btScalar(0)));
+            startTransform.setOrigin(btVector3(btScalar(sModelTransform.location.x), btScalar(sModelTransform.location.y), btScalar(sModelTransform.location.z)));
+            startTransform.setRotation(sModelTransform.rotation);
 
-        //cubePhysRigidBody->getMotionState()->setWorldTransform(startTransform);
+            colShape->setLocalScaling(btVector3(sModelTransform.scale.x, sModelTransform.scale.y, sModelTransform.scale.z));
 
+            //using motionstate is recommended, it provides interpolation capabilities, and only synchronizes 'active' objects
+            btDefaultMotionState* myMotionState = new btDefaultMotionState(startTransform);
+            btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, myMotionState, colShape, localInertia);
+            rbInfo.m_restitution = 0.5f;
+            btRigidBody* body = new btRigidBody(rbInfo);
+
+            cubePhysShape = colShape;
+            cubePhysRigidBody = body;
+
+#else
+            btTriangleMesh* triangleMesh = new btTriangleMesh();
+
+             const std::vector<MeshVertex>& vertices = sMeshes[sMeshIndex].vertices;
+             const std::vector<uint32_t>& indices = sMeshes[sMeshIndex].indices;
+
+             for (uint32_t i = 0; i < indices.size(); i += 3)
+             {
+                 const MeshVertex& v1 = vertices[indices[i + 0]];
+                 const MeshVertex& v2 = vertices[indices[i + 1]];
+                 const MeshVertex& v3 = vertices[indices[i + 2]];
+
+                 triangleMesh->addTriangle
+                 (
+                     btVector3(v1.pos.x, v1.pos.y, v1.pos.z),
+                     btVector3(v2.pos.x, v2.pos.y, v2.pos.z),
+                     btVector3(v3.pos.x, v3.pos.y, v3.pos.z)
+                 );
+             }
+
+             btBvhTriangleMeshShape* triangleShape = new btBvhTriangleMeshShape(triangleMesh, false);
+
+             btTransform t;
+             t.setIdentity();
+             t.setOrigin(btVector3(0, 0, 0));
+
+             btScalar mass(1.f);
+
+                 //rigidbody is dynamic if and only if mass is non zero, otherwise static
+            bool isDynamic = (mass != 0.f);
+
+            /*btVector3 localInertia(0, 0, 0);
+                 if (isDynamic)
+                     triangleShape->calculateLocalInertia(mass, localInertia);*/
+
+             btDefaultMotionState* motion = new btDefaultMotionState(t);
+
+             // Create the rigid body as before
+             btRigidBody::btRigidBodyConstructionInfo info(0.0, motion, triangleShape, btVector3(0, 0, 0));
+             info.m_friction = 3.0f;
+
+             btRigidBody* meshRigidBody = new btRigidBody(info);
+
+             triangleShape->setLocalScaling(btVector3(1, 1, 1));
+
+             dynamicsWorld->addRigidBody(meshRigidBody);
+
+             cubePhysShape = triangleShape;
+             cubePhysRigidBody = meshRigidBody;
+#endif
+        }
         dynamicsWorld->addRigidBody(cubePhysRigidBody);
-
         simulatePhysics = true;
     }
 
@@ -707,7 +777,7 @@ void ImguiRender()
     {
         for (uint32_t i = 0; i < sMeshes.size(); i++)
             if (ImGui::Selectable(sMeshes[i].debugName.c_str(), i == sMeshIndex))
-                SetMesh(i);
+                sMeshIndex = i;
 
         ImGui::EndCombo();
     }
@@ -773,12 +843,107 @@ void Render()
 
     ImguiRender();
 
-    uint32_t indexOffset = 0;
-    for (SubMeshData s : sMeshes[sMeshIndex].submeshes)
+    // camera
+    MVPBuffer mvp;
+
+    mvp.model = DirectX::XMMatrixIdentity();
+    mvp.inverseModel = DirectX::XMMatrixIdentity();
+
+    mvp.view = DirectX::XMMatrixLookToLH
+    (
+        { sCamera.location.x, sCamera.location.y, sCamera.location.z },
+        { sCamera.rotation.x, sCamera.rotation.y, sCamera.rotation.z },
+        { 0.0f, 1.0f, 0.0f }
+    );
+    mvp.view = DirectX::XMMatrixTranspose(mvp.view);
+    
+    mvp.proj = DirectX::XMMatrixPerspectiveFovLH(sCamera.FOV * TO_RADIANS, (float)gWindowWidth / (float)gWindowHeight, 0.01f, 1000.0f);
+    mvp.proj = DirectX::XMMatrixTranspose(mvp.proj);
+
+
+    // lighting
+    sLightSettings.camPos = { sCamera.location.x, sCamera.location.y, sCamera.location.z };
+
+    D3D11_MAPPED_SUBRESOURCE lightMap;
+    d3dcheck(gContext->Map(gLightBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &lightMap));
+    memcpy(lightMap.pData, &sLightSettings, sizeof(LightSettings));
+    gContext->Unmap(gLightBuffer, 0);
+
+    // default scene
     {
-        gContext->PSSetShaderResources(0, 1, &s.texture);
-        gContext->DrawIndexed(s.indexCount, indexOffset, 0);
-        indexOffset += s.indexCount;
+        // update mvp
+        DirectX::XMMATRIX model =
+            DirectX::XMMatrixScaling(sModelTransform.scale.x, sModelTransform.scale.y, sModelTransform.scale.z)
+            *
+            DirectX::XMMatrixRotationQuaternion(sModelTransform.rotation.get128())
+            *
+            DirectX::XMMatrixTranslation(sModelTransform.location.x, sModelTransform.location.y, sModelTransform.location.z);
+
+        mvp.model = DirectX::XMMatrixTranspose(model);
+        mvp.inverseModel = DirectX::XMMatrixInverse(nullptr, model);
+
+        D3D11_MAPPED_SUBRESOURCE mvpMap;
+        d3dcheck(gContext->Map(gMVPBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mvpMap));
+        memcpy(mvpMap.pData, &mvp, sizeof(MVPBuffer));
+        gContext->Unmap(gMVPBuffer, 0);
+
+        // bind everything
+        uint32_t strides[] = { sizeof(MeshVertex) };
+        uint32_t offsets[] = { 0 };
+        gContext->IASetVertexBuffers(0, 1, &sMeshes[sMeshIndex].vertexBuffer, strides, offsets);
+
+        gContext->IASetIndexBuffer(sMeshes[sMeshIndex].indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+        gContext->PSSetShader(gPixelShaderDefault, nullptr, 0);
+        gContext->RSSetState(gRasterStateDefault);
+
+        // render
+        uint32_t indexOffset = 0;
+        for (SubMeshData s : sMeshes[sMeshIndex].submeshes)
+        {
+            gContext->PSSetShaderResources(0, 1, &s.texture);
+            gContext->DrawIndexed(s.indexCount, indexOffset, 0);
+            indexOffset += s.indexCount;
+        }
+    }
+
+    // collider
+    {
+        // update mvp
+        btTransform tranform = groundPhysRigidBody->getWorldTransform();
+        btVector3 scaling = groundPhysShape->getLocalScaling();
+
+        DirectX::XMMATRIX model =
+            DirectX::XMMatrixScaling(scaling.x(), scaling.y(), scaling.z())
+            *
+            DirectX::XMMatrixRotationQuaternion(tranform.getRotation().get128())
+            *
+            DirectX::XMMatrixTranslation(tranform.getOrigin().x(), tranform.getOrigin().y(), tranform.getOrigin().z());
+
+        mvp.model = DirectX::XMMatrixTranspose(model);
+        mvp.inverseModel = DirectX::XMMatrixInverse(nullptr, model);
+
+        D3D11_MAPPED_SUBRESOURCE mvpMap;
+        d3dcheck(gContext->Map(gMVPBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mvpMap));
+        memcpy(mvpMap.pData, &mvp, sizeof(MVPBuffer));
+        gContext->Unmap(gMVPBuffer, 0);
+
+        // bind everything
+        uint32_t strides[] = { sizeof(MeshVertex) };
+        uint32_t offsets[] = { 0 };
+        gContext->IASetVertexBuffers(0, 1, &sMeshes[COLLIDER_MESH_INDEX].vertexBuffer, strides, offsets);
+
+        gContext->IASetIndexBuffer(sMeshes[COLLIDER_MESH_INDEX].indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+        gContext->PSSetShader(gPixelShaderCollider, nullptr, 0);
+        gContext->RSSetState(gRasterStateWireframe);
+
+        // render
+        uint32_t indexOffset = 0;
+        for (SubMeshData s : sMeshes[COLLIDER_MESH_INDEX].submeshes)
+        {
+            //gContext->PSSetShaderResources(0, 1, &s.texture);
+            gContext->DrawIndexed(s.indexCount, indexOffset, 0);
+            indexOffset += s.indexCount;
+        }
     }
 
     ImGui::Render();
