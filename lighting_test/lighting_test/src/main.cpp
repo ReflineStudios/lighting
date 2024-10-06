@@ -32,14 +32,25 @@ ID3D11RenderTargetView* gBackBufferView = nullptr;
 
 ID3D11DepthStencilView* gDepthBufferView = nullptr;
 
+ID3D11DepthStencilState* gStancilStateDefault = nullptr;
+ID3D11DepthStencilState* gStancilStateSkybox = nullptr;
+
 ID3D11Buffer* gMVPBuffer = nullptr;
 ID3D11Buffer* gLightBuffer = nullptr;
 
 ID3D11RasterizerState* gRasterStateDefault = nullptr;
 ID3D11RasterizerState* gRasterStateWireframe = nullptr;
+ID3D11RasterizerState* gRasterStateSkybox = nullptr;
 
 ID3D11PixelShader* gPixelShaderDefault = nullptr;
 ID3D11PixelShader* gPixelShaderCollider = nullptr;
+ID3D11PixelShader* gPixelShaderSkybox = nullptr;
+
+ID3D11InputLayout* inputLayout;
+ID3D11InputLayout* inputLayoutSkybox;
+
+ID3D11VertexShader* vertexShaderDefault;
+ID3D11VertexShader* vertexShaderSkybox;
 
 constexpr float TO_RADIANS = DirectX::XM_PI / 180.0f;
 constexpr float TO_DEGREES = 180.0f / DirectX::XM_PI;
@@ -141,6 +152,44 @@ struct Mesh
 
 static std::vector<Mesh> sMeshes;
 static uint32_t sMeshIndex = 0;
+
+void LoadMesh(MeshVertex* vertData, int vertCount, uint32_t* indexData, int indexCount, Mesh& outMesh)
+{
+    ID3D11Buffer* vertexBuffer;
+    ID3D11Buffer* indexBuffer;
+
+    D3D11_BUFFER_DESC vBufferDesc = {};
+    vBufferDesc.ByteWidth = sizeof(MeshVertex) * vertCount;
+    vBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+    vBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    vBufferDesc.StructureByteStride = sizeof(MeshVertex);
+
+    D3D11_SUBRESOURCE_DATA vBufferDataPtr = {};
+    vBufferDataPtr.pSysMem = (const void*)vertData;
+
+    d3dcheck(gDevice->CreateBuffer(&vBufferDesc, &vBufferDataPtr, &vertexBuffer));
+
+    D3D11_BUFFER_DESC iBufferDesc = {};
+    iBufferDesc.ByteWidth = sizeof(uint32_t) * indexCount;
+    iBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+    iBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+
+    D3D11_SUBRESOURCE_DATA iBufferDataPtr = {};
+    iBufferDataPtr.pSysMem = (const void*)indexData;
+
+    d3dcheck(gDevice->CreateBuffer(&iBufferDesc, &iBufferDataPtr, &indexBuffer));
+
+    outMesh.vertexBuffer = vertexBuffer;
+    outMesh.indexBuffer = indexBuffer;
+
+
+    auto& teest = outMesh.submeshes.emplace_back();
+    teest.indexCount = indexCount;
+    teest.texture = nullptr;
+
+    outMesh.debugName = "swag";
+}
+
 
 void LoadMesh(const std::string& meshPath, Mesh& outMesh)
 {
@@ -256,14 +305,14 @@ void LoadMesh(const std::string& meshPath, Mesh& outMesh)
     outMesh.indices = indices;
 }
 
-void CreateTexture(uint32_t width, uint32_t height, void* data, ID3D11Texture2D*& outTexture, ID3D11ShaderResourceView*& outResource)
+void CreateTexture(uint32_t width, uint32_t height, void* data, ID3D11Texture2D*& outTexture, ID3D11ShaderResourceView*& outResource) //, uint32_t arrSize = 1
 {
     D3D11_TEXTURE2D_DESC texDesc = {};
     texDesc.Usage = D3D11_USAGE_DEFAULT;
     texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     texDesc.ArraySize = 1;
-    texDesc.Width = (UINT)width;
-    texDesc.Height = (UINT)height;
+    texDesc.Width = width;
+    texDesc.Height = height;
     texDesc.MipLevels = 1;
     texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     texDesc.SampleDesc.Count = 1;
@@ -281,9 +330,54 @@ void LoadTexture(const std::string& texturePath, ID3D11Texture2D*& outTexture, I
     int x, y, channels;
     void* img = stbi_load(texturePath.c_str(), &x, &y, &channels, 4);
 
-    CreateTexture((uint32_t)x, (uint32_t)y, img, outTexture, outResource);
+    CreateTexture(static_cast<uint32_t>(x), static_cast<uint32_t>(y), img, outTexture, outResource);
 
     stbi_image_free(img);
+}
+
+void LoadTexture(const std::vector<std::string>& texturePaths, ID3D11Texture2D*& outTexture, ID3D11ShaderResourceView*& outResource)
+{
+    int width, height, channels;
+    void* img = stbi_load(texturePaths.at(0).c_str(), &width, &height, &channels, 4);
+
+    std::vector<void*> surfaces;
+    for (const auto& path : texturePaths)
+    {
+        int w, h, c;
+        void* img = stbi_load(path.c_str(), &w, &h, &c, 4);
+        surfaces.push_back(img);
+    }
+
+    D3D11_TEXTURE2D_DESC texDesc = {};
+    texDesc.Usage = D3D11_USAGE_DEFAULT;
+    texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    texDesc.ArraySize = 6;
+    texDesc.Width = (UINT)width;
+    texDesc.Height = (UINT)height;
+    texDesc.MipLevels = 1;
+    texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    texDesc.SampleDesc.Count = 1;
+    texDesc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
+
+    D3D11_SUBRESOURCE_DATA data[6];
+    for (int i = 0; i < 6; i++)
+    {
+        data[i].pSysMem = surfaces[i];
+        data[i].SysMemPitch = 4 * width;
+        data[i].SysMemSlicePitch = 0;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = texDesc.Format;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+    srvDesc.Texture2D.MostDetailedMip = 0;
+    srvDesc.Texture2D.MipLevels = 1;
+
+    d3dcheck(gDevice->CreateTexture2D(&texDesc, data, &outTexture));
+    d3dcheck(gDevice->CreateShaderResourceView(outTexture, &srvDesc, &outResource));
+
+    for (auto& s : surfaces)
+        stbi_image_free(s);
 }
 
 void Init()
@@ -304,7 +398,7 @@ void Init()
     swapchainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
 
     HRESULT swapchainHR = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, 0, D3D11_CREATE_DEVICE_DEBUG, 0, 0,
-            D3D11_SDK_VERSION, &swapchainDesc, &gSwapChain, &gDevice, 0, &gContext);
+        D3D11_SDK_VERSION, &swapchainDesc, &gSwapChain, &gDevice, 0, &gContext);
 
     d3dcheck(swapchainHR);
 
@@ -314,32 +408,39 @@ void Init()
     d3dcheck(gDevice->CreateRenderTargetView(backBuffer, nullptr, &gBackBufferView));
     backBuffer->Release();
 
-    // depth buffer
-    D3D11_TEXTURE2D_DESC depthDesc = {};
-    depthDesc.Usage = D3D11_USAGE_DEFAULT;
-    depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-    depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-    depthDesc.Width = gWindowWidth;
-    depthDesc.Height = gWindowHeight;
-    depthDesc.MipLevels = 1;
-    depthDesc.ArraySize = 1;
-    depthDesc.SampleDesc.Count = 1;
+    {
+        // depth buffer
+        D3D11_TEXTURE2D_DESC depthDesc = {};
+        depthDesc.Usage = D3D11_USAGE_DEFAULT;
+        depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+        depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+        depthDesc.Width = gWindowWidth;
+        depthDesc.Height = gWindowHeight;
+        depthDesc.MipLevels = 1;
+        depthDesc.ArraySize = 1;
+        depthDesc.SampleDesc.Count = 1;
 
-    ID3D11Texture2D* depthBuffer;
-    d3dcheck(gDevice->CreateTexture2D(&depthDesc, nullptr, &depthBuffer));  
-    d3dcheck(gDevice->CreateDepthStencilView(depthBuffer, nullptr, &gDepthBufferView));
-    depthBuffer->Release();
+        ID3D11Texture2D* depthBuffer;
+        d3dcheck(gDevice->CreateTexture2D(&depthDesc, nullptr, &depthBuffer));
+        d3dcheck(gDevice->CreateDepthStencilView(depthBuffer, nullptr, &gDepthBufferView));
+        depthBuffer->Release();
+    }
+    
+    {
+        D3D11_DEPTH_STENCIL_DESC dssDesc;
+        ZeroMemory(&dssDesc, sizeof(D3D11_DEPTH_STENCIL_DESC));
+        dssDesc.DepthEnable = true;
+        dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        dssDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
 
-    // shaders
-    ID3D11VertexShader* vertexShader;
-    ID3D11InputLayout* inputLayout;
+        d3dcheck(gDevice->CreateDepthStencilState(&dssDesc, &gStancilStateSkybox));
+    }
 
     // vertex shader
     {
-
         ID3DBlob* vsBlob;
         d3dcheck(D3DCompileFromFile(L"shaders/vertex.hlsl", nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsBlob, nullptr));
-        d3dcheck(gDevice->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vertexShader));
+        d3dcheck(gDevice->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vertexShaderDefault));
 
         D3D11_INPUT_ELEMENT_DESC inputs[3] = {};
 
@@ -375,6 +476,30 @@ void Init()
         psBlob->Release();
     }
 
+    // vertex shader skybox
+    {
+        ID3DBlob* vsBlob;
+        d3dcheck(D3DCompileFromFile(L"shaders/Skybox_VS.hlsl", nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsBlob, nullptr));
+        d3dcheck(gDevice->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vertexShaderSkybox));
+
+        D3D11_INPUT_ELEMENT_DESC inputs[1] = {};
+
+        inputs[0].SemanticName = "Position";
+        inputs[0].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+        inputs[0].AlignedByteOffset = 0;
+
+        d3dcheck(gDevice->CreateInputLayout(inputs, sizeof(inputs) / sizeof(D3D11_INPUT_ELEMENT_DESC), vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &inputLayoutSkybox));
+        vsBlob->Release();
+    }
+
+    // pixel shader skybox
+    {
+        ID3DBlob* psBlob;
+        d3dcheck(D3DCompileFromFile(L"shaders/Skybox_PS.hlsl", nullptr, nullptr, "main", "ps_5_0", 0, 0, &psBlob, nullptr));
+        d3dcheck(gDevice->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &gPixelShaderSkybox));
+        psBlob->Release();
+    }
+
     // sampler for textures
     ID3D11SamplerState* sampler;
 
@@ -387,7 +512,7 @@ void Init()
     samplerDesc.MinLOD = 0;
     samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
-    gDevice->CreateSamplerState(&samplerDesc, &sampler);
+    d3dcheck(gDevice->CreateSamplerState(&samplerDesc, &sampler));
 
     // rasterizer state
     D3D11_RASTERIZER_DESC rasterDesc = {};
@@ -408,6 +533,11 @@ void Init()
     rasterDesc.FillMode = D3D11_FILL_WIREFRAME;
     rasterDesc.CullMode = D3D11_CULL_NONE;      // WIREFRAME (colliders)
     d3dcheck(gDevice->CreateRasterizerState(&rasterDesc, &gRasterStateWireframe));
+
+
+    rasterDesc.FillMode = D3D11_FILL_SOLID;
+    rasterDesc.CullMode = D3D11_CULL_NONE;      
+    d3dcheck(gDevice->CreateRasterizerState(&rasterDesc, &gRasterStateSkybox));
 
     // mvp buffer
     D3D11_BUFFER_DESC mvpBufferDesc = {};
@@ -430,7 +560,7 @@ void Init()
     // bind everyting
     gContext->OMSetRenderTargets(1, &gBackBufferView, gDepthBufferView);
 
-    gContext->VSSetShader(vertexShader, nullptr, 0);
+    gContext->VSSetShader(vertexShaderDefault, nullptr, 0);
     gContext->IASetInputLayout(inputLayout);
 
     gContext->VSSetConstantBuffers(0, 1, &gMVPBuffer);
@@ -476,6 +606,37 @@ void Init()
 
     sMeshes[1].submeshes[0].texture = whiteTextRes;
     sMeshes[4].submeshes[0].texture = whiteTextRes;
+
+    {
+        constexpr float side = 1.0f / 2.0f;
+        MeshVertex skyboxVertices[] = {
+        {{ -side,-side,-side }, {}, {} },
+        {{ side,-side,-side }, {}, {} },
+        {{ -side,side,-side }, {}, {} },
+        {{ side,side,-side }, {}, {} },
+        {{ -side,-side,side }, {}, {} },
+        {{ side,-side,side }, {}, {} },
+        {{ -side,side,side }, {}, {} },
+        {{ side,side,side }, {}, {} }
+        };
+
+        uint32_t skyboxIndices[] = {
+                0,2,1, 2,3,1,
+                1,3,5, 3,7,5,
+                2,6,3, 3,6,7,
+                4,5,7, 4,7,6,
+                0,4,2, 2,4,6,
+                0,1,4, 1,5,4 };
+
+        auto& boxMesh = sMeshes.emplace_back();
+
+        LoadMesh(skyboxVertices, 8, skyboxIndices, 36, boxMesh);
+
+        std::vector<std::string> surfaces = { "textures/sky/0.png", "textures/sky/1.png", "textures/sky/2.png", "textures/sky/3.png", "textures/sky/4.png", "textures/sky/5.png" };
+
+        LoadTexture(surfaces, dummy, boxMesh.submeshes[0].texture);
+
+    }
 
     // set default mesh
     sMeshIndex = 1;
@@ -868,6 +1029,51 @@ void Render()
     d3dcheck(gContext->Map(gLightBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &lightMap));
     memcpy(lightMap.pData, &sLightSettings, sizeof(LightSettings));
     gContext->Unmap(gLightBuffer, 0);
+
+    gContext->VSSetShader(vertexShaderSkybox, nullptr, 0);
+    gContext->OMSetDepthStencilState(gStancilStateSkybox, 0);
+    gContext->IASetInputLayout(inputLayoutSkybox);
+
+    // skybox
+    {
+
+        // update mvp
+        DirectX::XMMATRIX model = DirectX::XMMatrixScaling(1000, 1000, 1000)
+                                * DirectX::XMMatrixTranslation(sCamera.location.x, sCamera.location.y, sCamera.location.z);
+
+        mvp.model = DirectX::XMMatrixTranspose(model);
+        mvp.inverseModel = DirectX::XMMatrixInverse(nullptr, model);
+
+
+        D3D11_MAPPED_SUBRESOURCE mvpMap;
+        d3dcheck(gContext->Map(gMVPBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mvpMap));
+        memcpy(mvpMap.pData, &mvp, sizeof(MVPBuffer));
+        gContext->Unmap(gMVPBuffer, 0);
+
+        // bind everything
+        uint32_t strides[] = { sizeof(MeshVertex) };
+        uint32_t offsets[] = { 0 };
+        gContext->IASetVertexBuffers(0, 1, &sMeshes[5].vertexBuffer, strides, offsets);
+
+        gContext->IASetIndexBuffer(sMeshes[5].indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+
+        gContext->PSSetShader(gPixelShaderSkybox, nullptr, 0);
+        gContext->RSSetState(gRasterStateSkybox);
+
+        // render
+        uint32_t indexOffset = 0;
+        for (SubMeshData s : sMeshes[5].submeshes)
+        {
+            gContext->PSSetShaderResources(0, 1, &s.texture);
+            gContext->DrawIndexed(s.indexCount, indexOffset, 0);
+            indexOffset += s.indexCount;
+        }
+    }
+
+    gContext->VSSetShader(vertexShaderDefault, nullptr, 0);
+    gContext->IASetInputLayout(inputLayout);
+    gContext->OMSetDepthStencilState(nullptr, 0);
+
 
     // default scene
     {
