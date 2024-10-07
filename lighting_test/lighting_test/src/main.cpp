@@ -153,7 +153,7 @@ struct Mesh
 static std::vector<Mesh> sMeshes;
 static uint32_t sMeshIndex = 0;
 
-void LoadMesh(MeshVertex* vertData, int vertCount, uint32_t* indexData, int indexCount, Mesh& outMesh)
+void LoadMesh(const MeshVertex* vertData, const int vertCount, const uint32_t* indexData, const int indexCount, Mesh& outMesh)
 {
     ID3D11Buffer* vertexBuffer;
     ID3D11Buffer* indexBuffer;
@@ -305,7 +305,7 @@ void LoadMesh(const std::string& meshPath, Mesh& outMesh)
     outMesh.indices = indices;
 }
 
-void CreateTexture(uint32_t width, uint32_t height, void* data, ID3D11Texture2D*& outTexture, ID3D11ShaderResourceView*& outResource) //, uint32_t arrSize = 1
+void CreateTexture(const uint32_t width, const uint32_t height, const void* data, ID3D11Texture2D*& outTexture, ID3D11ShaderResourceView*& outResource) //, uint32_t arrSize = 1
 {
     D3D11_TEXTURE2D_DESC texDesc = {};
     texDesc.Usage = D3D11_USAGE_DEFAULT;
@@ -329,16 +329,14 @@ void LoadTexture(const std::string& texturePath, ID3D11Texture2D*& outTexture, I
 {
     int x, y, channels;
     void* img = stbi_load(texturePath.c_str(), &x, &y, &channels, 4);
-
     CreateTexture(static_cast<uint32_t>(x), static_cast<uint32_t>(y), img, outTexture, outResource);
-
     stbi_image_free(img);
 }
 
-void LoadTexture(const std::vector<std::string>& texturePaths, ID3D11Texture2D*& outTexture, ID3D11ShaderResourceView*& outResource)
+void LoadSkyboxTexture(const std::vector<std::string>& texturePaths, ID3D11Texture2D*& outTexture, ID3D11ShaderResourceView*& outResource)
 {
     int width, height, channels;
-    void* img = stbi_load(texturePaths.at(0).c_str(), &width, &height, &channels, 4);
+    stbi_image_free(stbi_load(texturePaths.at(0).c_str(), &width, &height, &channels, 4));
 
     std::vector<void*> surfaces;
     for (const auto& path : texturePaths)
@@ -424,6 +422,14 @@ void Init()
         d3dcheck(gDevice->CreateTexture2D(&depthDesc, nullptr, &depthBuffer));
         d3dcheck(gDevice->CreateDepthStencilView(depthBuffer, nullptr, &gDepthBufferView));
         depthBuffer->Release();
+
+        D3D11_VIEWPORT viewport = {};
+        viewport.Width = gWindowWidth;
+        viewport.Height = gWindowHeight;
+        viewport.MaxDepth = 1.0f;
+        viewport.MinDepth = 0.0f;
+
+        gContext->RSSetViewports(1, &viewport);
     }
     
     {
@@ -568,14 +574,6 @@ void Init()
 
     gContext->PSSetSamplers(0, 1, &sampler);
 
-    D3D11_VIEWPORT viewport = {};
-    viewport.Width = gWindowWidth;
-    viewport.Height = gWindowHeight;
-    viewport.MaxDepth = 1.0f;
-    viewport.MinDepth = 0.0f;
-
-    gContext->RSSetViewports(1, &viewport);
-
     gContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     // load meshes
@@ -633,9 +631,7 @@ void Init()
         LoadMesh(skyboxVertices, 8, skyboxIndices, 36, boxMesh);
 
         std::vector<std::string> surfaces = { "textures/sky/0.png", "textures/sky/1.png", "textures/sky/2.png", "textures/sky/3.png", "textures/sky/4.png", "textures/sky/5.png" };
-
-        LoadTexture(surfaces, dummy, boxMesh.submeshes[0].texture);
-
+        LoadSkyboxTexture(surfaces, dummy, boxMesh.submeshes[0].texture);
     }
 
     // set default mesh
@@ -665,7 +661,7 @@ void Init()
 
     dynamicsWorld->setGravity(btVector3(0, -10, 0));
 
-    // physics - terrain
+    // physics - terrain TODO: semplificare
 
     if constexpr (COLLIDER_MESH_INDEX == 4)
     {
@@ -1010,16 +1006,14 @@ void Render()
     mvp.model = DirectX::XMMatrixIdentity();
     mvp.inverseModel = DirectX::XMMatrixIdentity();
 
-    mvp.view = DirectX::XMMatrixLookToLH
+    mvp.view = XMMatrixTranspose(DirectX::XMMatrixLookToLH
     (
         { sCamera.location.x, sCamera.location.y, sCamera.location.z },
         { sCamera.rotation.x, sCamera.rotation.y, sCamera.rotation.z },
         { 0.0f, 1.0f, 0.0f }
-    );
-    mvp.view = DirectX::XMMatrixTranspose(mvp.view);
+    ));
     
-    mvp.proj = DirectX::XMMatrixPerspectiveFovLH(sCamera.FOV * TO_RADIANS, (float)gWindowWidth / (float)gWindowHeight, 0.01f, 1000.0f);
-    mvp.proj = DirectX::XMMatrixTranspose(mvp.proj);
+    mvp.proj = XMMatrixTranspose(DirectX::XMMatrixPerspectiveFovLH(sCamera.FOV * TO_RADIANS, (float)gWindowWidth / (float)gWindowHeight, 0.01f, 1000.0f));
 
 
     // lighting
@@ -1043,7 +1037,6 @@ void Render()
 
         mvp.model = DirectX::XMMatrixTranspose(model);
         mvp.inverseModel = DirectX::XMMatrixInverse(nullptr, model);
-
 
         D3D11_MAPPED_SUBRESOURCE mvpMap;
         d3dcheck(gContext->Map(gMVPBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mvpMap));
