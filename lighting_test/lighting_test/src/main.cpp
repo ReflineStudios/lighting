@@ -52,6 +52,9 @@ ID3D11InputLayout* inputLayoutSkybox;
 ID3D11VertexShader* vertexShaderDefault;
 ID3D11VertexShader* vertexShaderSkybox;
 
+uint32_t shaderCompileFlags = D3DCOMPILE_ENABLE_STRICTNESS;
+
+
 constexpr float TO_RADIANS = DirectX::XM_PI / 180.0f;
 constexpr float TO_DEGREES = 180.0f / DirectX::XM_PI;
 
@@ -380,6 +383,10 @@ void LoadSkyboxTexture(const std::vector<std::string>& texturePaths, ID3D11Textu
 
 void Init()
 {
+#if defined( DEBUG ) || defined( _DEBUG )
+    shaderCompileFlags |= D3DCOMPILE_DEBUG;
+#endif
+
     // create swapchain
     DXGI_SWAP_CHAIN_DESC swapchainDesc = {};
     swapchainDesc.BufferCount = 1;
@@ -445,7 +452,7 @@ void Init()
     // vertex shader
     {
         ID3DBlob* vsBlob;
-        d3dcheck(D3DCompileFromFile(L"shaders/vertex.hlsl", nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsBlob, nullptr));
+        d3dcheck(D3DCompileFromFile(L"shaders/vertex.hlsl", nullptr, nullptr, "main", "vs_5_0", shaderCompileFlags, 0, &vsBlob, nullptr));
         d3dcheck(gDevice->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vertexShaderDefault));
 
         D3D11_INPUT_ELEMENT_DESC inputs[3] = {};
@@ -469,7 +476,7 @@ void Init()
     // default pixel
     {
         ID3DBlob* psBlob;
-        d3dcheck(D3DCompileFromFile(L"shaders/pixel.hlsl", nullptr, nullptr, "main", "ps_5_0", 0, 0, &psBlob, nullptr));
+        d3dcheck(D3DCompileFromFile(L"shaders/pixel.hlsl", nullptr, nullptr, "main", "ps_5_0", shaderCompileFlags, 0, &psBlob, nullptr));
         d3dcheck(gDevice->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &gPixelShaderDefault));
         psBlob->Release();
     }
@@ -477,7 +484,7 @@ void Init()
     // collider pixel
     {
         ID3DBlob* psBlob;
-        d3dcheck(D3DCompileFromFile(L"shaders/pixel_collider.hlsl", nullptr, nullptr, "main", "ps_5_0", 0, 0, &psBlob, nullptr));
+        d3dcheck(D3DCompileFromFile(L"shaders/pixel_collider.hlsl", nullptr, nullptr, "main", "ps_5_0", shaderCompileFlags, 0, &psBlob, nullptr));
         d3dcheck(gDevice->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &gPixelShaderCollider));
         psBlob->Release();
     }
@@ -485,7 +492,7 @@ void Init()
     // vertex shader skybox
     {
         ID3DBlob* vsBlob;
-        d3dcheck(D3DCompileFromFile(L"shaders/Skybox_VS.hlsl", nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsBlob, nullptr));
+        d3dcheck(D3DCompileFromFile(L"shaders/Skybox_VS.hlsl", nullptr, nullptr, "main", "vs_5_0", shaderCompileFlags, 0, &vsBlob, nullptr));
         d3dcheck(gDevice->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vertexShaderSkybox));
 
         D3D11_INPUT_ELEMENT_DESC inputs[1] = {};
@@ -501,7 +508,7 @@ void Init()
     // pixel shader skybox
     {
         ID3DBlob* psBlob;
-        d3dcheck(D3DCompileFromFile(L"shaders/Skybox_PS.hlsl", nullptr, nullptr, "main", "ps_5_0", 0, 0, &psBlob, nullptr));
+        d3dcheck(D3DCompileFromFile(L"shaders/Skybox_PS.hlsl", nullptr, nullptr, "main", "ps_5_0", shaderCompileFlags, 0, &psBlob, nullptr));
         d3dcheck(gDevice->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &gPixelShaderSkybox));
         psBlob->Release();
     }
@@ -630,7 +637,7 @@ void Init()
 
         LoadMesh(skyboxVertices, 8, skyboxIndices, 36, boxMesh);
 
-        std::vector<std::string> surfaces = { "textures/sky/0.png", "textures/sky/1.png", "textures/sky/2.png", "textures/sky/3.png", "textures/sky/4.png", "textures/sky/5.png" };
+        std::vector<std::string> surfaces = { "textures/sky/1.png", "textures/sky/0.png", "textures/sky/2.png", "textures/sky/3.png", "textures/sky/4.png", "textures/sky/5.png" };
         LoadSkyboxTexture(surfaces, dummy, boxMesh.submeshes[0].texture);
     }
 
