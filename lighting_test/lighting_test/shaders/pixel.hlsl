@@ -18,7 +18,10 @@ cbuffer LightSettings : register(b0)
     float ambientStrength0;
     float specularStrength0;
     float specularPow0;
-    float dummyPadding0;
+    float constant0;
+    float linear0;
+    float quadratic0;
+    float2 dummyPadding0;
 };
 
 float4 main(VertexOutput v) : SV_Target0
@@ -39,6 +42,13 @@ float4 main(VertexOutput v) : SV_Target0
     
     float spec = pow(max(dot(viewDir, reflectDir), 0.0f), specularPow0);
     float3 specular = specularStrength0 * spec * lightColor0.xyz;
+
+
+    float distance = length(lightPos - v.worldPos);
+    float attenuation = 1.0 / (constant0 + linear0 * distance + quadratic0 * pow(distance, 2));
+    ambientLight *= attenuation;
+    diffuse *= attenuation;
+    specular *= attenuation;
     
     return float4(textureSample * (diffuse + ambientLight + specular), 1.0f);
 }

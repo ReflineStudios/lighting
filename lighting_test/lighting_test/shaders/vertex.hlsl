@@ -27,7 +27,7 @@ VertexOutput main(float3 pos : POS, float3 normal : NORMAL, float2 texCoords : T
     
     o.texCoords = texCoords;
     
-    o.normal = normalize(mul(normal, float3x3(inverseModel[0].xyz, inverseModel[1].xyz, inverseModel[2].xyz)));
+    o.normal = normalize(mul(normal, float3x3(inverseModel[0].xyz, inverseModel[1].xyz, inverseModel[2].xyz))); //'normal matrix' used to transform normals (since normals are not affected by translation), otherwise lighting would be distorted with non-uniform scaling of the model in the world space
     
     return o;
 }

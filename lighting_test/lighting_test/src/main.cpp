@@ -20,8 +20,8 @@
 
 bool gAppShouldRun = true;
 
-uint32_t gWindowWidth = 1600;
-uint32_t gWindowHeight = 900;
+uint32_t gWindowWidth = 1920; // 1600;
+uint32_t gWindowHeight = 1080;// 900;
 HWND gWindow = nullptr;
 
 IDXGISwapChain* gSwapChain = nullptr;
@@ -131,7 +131,12 @@ struct LightSettings
     float ambientStrength = 0.1f;
     float specularStrength = 0.7f;
     float specularPow = 256;
-    float dummyPadding0;
+
+    // attenuation
+    float constant = 1.0f;
+    float linear = 0.35f;
+    float quadratic = 0.44f;
+    Vec2 dummyPadding0;
 };
 
 struct SceneSettings
@@ -384,7 +389,7 @@ void LoadSkyboxTexture(const std::vector<std::string>& texturePaths, ID3D11Textu
 void Init()
 {
 #if defined( DEBUG ) || defined( _DEBUG )
-    shaderCompileFlags |= D3DCOMPILE_DEBUG;
+    shaderCompileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
     // create swapchain
