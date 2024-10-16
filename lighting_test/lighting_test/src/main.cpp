@@ -32,8 +32,8 @@ ID3D11RenderTargetView* gBackBufferView = nullptr;
 
 ID3D11DepthStencilView* gDepthBufferView = nullptr;
 
-ID3D11DepthStencilState* gStancilStateDefault = nullptr;
-ID3D11DepthStencilState* gStancilStateSkybox = nullptr;
+ID3D11DepthStencilState* gStencilStateDefault = nullptr;
+ID3D11DepthStencilState* gStencilStateSkybox = nullptr;
 
 ID3D11Buffer* gMVPBuffer = nullptr;
 ID3D11Buffer* gLightBuffer = nullptr;
@@ -451,7 +451,7 @@ void Init()
         dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
         dssDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
 
-        d3dcheck(gDevice->CreateDepthStencilState(&dssDesc, &gStancilStateSkybox));
+        d3dcheck(gDevice->CreateDepthStencilState(&dssDesc, &gStencilStateSkybox));
     }
 
     // vertex shader
@@ -1037,7 +1037,7 @@ void Render()
     gContext->Unmap(gLightBuffer, 0);
 
     gContext->VSSetShader(vertexShaderSkybox, nullptr, 0);
-    gContext->OMSetDepthStencilState(gStancilStateSkybox, 0);
+    gContext->OMSetDepthStencilState(gStencilStateSkybox, 0);
     gContext->IASetInputLayout(inputLayoutSkybox);
 
     // skybox
