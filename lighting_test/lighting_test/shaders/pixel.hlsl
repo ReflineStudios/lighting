@@ -1,5 +1,8 @@
-Texture2D albedo;
+Texture2D albedo : register(t0); //diffuse texture / diffuse map / diffuse color
+Texture2D depthMap : register(t1);
 SamplerState sampler0;
+SamplerComparisonState samplerShadow0;
+
 
 struct VertexOutput
 {
@@ -7,6 +10,7 @@ struct VertexOutput
     float4 worldPos : WORLD_POS;
     float3 normal : NORMAL;
     float2 texCoords : TEX_COORDS;
+    float4 posLightSpace : POS_LIGHT_SPACE; // pixel location in light's clip space
 };
 
 cbuffer LightSettings : register(b0)
@@ -18,11 +22,28 @@ cbuffer LightSettings : register(b0)
     float ambientStrength0;
     float specularStrength0;
     float specularPow0;
+
+    //attenuation factors
     float constant0;
     float linear0;
     float quadratic0;
     float2 dummyPadding0;
 };
+
+
+float ShadowCalculation(float4 fragPosLightSpace)
+{
+    float3 projCoords = (fragPosLightSpace.xyz / fragPosLightSpace.w);
+    //projCoords = projCoords * 0.5f + 0.5f;
+
+    float currentDepth = projCoords.z;
+
+    float closestDepth = depthMap.SampleCmpLevelZero(samplerShadow0, projCoords.xy, currentDepth).r;
+    
+    float shadow = currentDepth > closestDepth ? 1.0f : 0.0f;
+    
+    return closestDepth;
+}
 
 float4 main(VertexOutput v) : SV_Target0
 {   
@@ -45,10 +66,13 @@ float4 main(VertexOutput v) : SV_Target0
 
 
     float distance = length(lightPos - v.worldPos);
-    float attenuation = 1.0 / (constant0 + linear0 * distance + quadratic0 * pow(distance, 2));
-    ambientLight *= attenuation;
-    diffuse *= attenuation;
-    specular *= attenuation;
+    //float attenuation = 1.0 / (constant0 + linear0 * distance + quadratic0 * pow(distance, 2));
+    //ambientLight *= attenuation;
+    //diffuse *= attenuation;
+    //specular *= attenuation;
+
+    float shadow = ShadowCalculation(v.posLightSpace);
+    //float shadow = depthMap.SampleCmpLevelZero(samplerShadow0, float2(v.posLightSpace.xy / v.posLightSpace.w), float(v.posLightSpace.z / v.posLightSpace.w));
     
-    return float4(textureSample * (diffuse + ambientLight + specular), 1.0f);
+    return float4(textureSample * (ambientLight + (1.0f + shadow) * (diffuse + specular)), 1.0f);
 }

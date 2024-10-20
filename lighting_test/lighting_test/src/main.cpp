@@ -13,7 +13,7 @@
 #include <DirectXMath.h>
 
 
-#define BT_THREADSAFE 1
+//#define BT_THREADSAFE 1
 //#define BT_USE_DOUBLE_PRECISION
 
 #include <bullet/btBulletDynamicsCommon.h>
@@ -24,6 +24,9 @@ uint32_t gWindowWidth = 1920; // 1600;
 uint32_t gWindowHeight = 1080;// 900;
 HWND gWindow = nullptr;
 
+uint32_t shadowMapWidth = 1024;
+uint32_t shadowMapHeight = 1024;
+
 IDXGISwapChain* gSwapChain = nullptr;
 ID3D11Device* gDevice = nullptr;
 ID3D11DeviceContext* gContext = nullptr;
@@ -31,6 +34,9 @@ ID3D11DeviceContext* gContext = nullptr;
 ID3D11RenderTargetView* gBackBufferView = nullptr;
 
 ID3D11DepthStencilView* gDepthBufferView = nullptr;
+ID3D11DepthStencilView* pShadowMapDepthView = nullptr;
+
+ID3D11ShaderResourceView* pShadowMapSRView = nullptr;
 
 ID3D11DepthStencilState* gStencilStateDefault = nullptr;
 ID3D11DepthStencilState* gStencilStateSkybox = nullptr;
@@ -45,12 +51,19 @@ ID3D11RasterizerState* gRasterStateSkybox = nullptr;
 ID3D11PixelShader* gPixelShaderDefault = nullptr;
 ID3D11PixelShader* gPixelShaderCollider = nullptr;
 ID3D11PixelShader* gPixelShaderSkybox = nullptr;
+ID3D11PixelShader* gShadowMappingPS = nullptr;
 
-ID3D11InputLayout* inputLayout;
-ID3D11InputLayout* inputLayoutSkybox;
+ID3D11InputLayout* inputLayout = nullptr;
+ID3D11InputLayout* inputLayoutSkybox = nullptr;
+ID3D11InputLayout* inputLayoutShadowMap = nullptr;
 
-ID3D11VertexShader* vertexShaderDefault;
-ID3D11VertexShader* vertexShaderSkybox;
+ID3D11VertexShader* vertexShaderDefault = nullptr;
+ID3D11VertexShader* vertexShaderSkybox = nullptr;
+ID3D11VertexShader* gShadowMappingVS = nullptr;
+
+ID3D11SamplerState* sampler;
+// sampler for shadow mapping
+ID3D11SamplerState* shadowSampler;
 
 uint32_t shaderCompileFlags = D3DCOMPILE_ENABLE_STRICTNESS;
 
@@ -102,7 +115,7 @@ struct MVPBuffer
     DirectX::XMMATRIX model;
     DirectX::XMMATRIX view;
     DirectX::XMMATRIX proj;
-
+    DirectX::XMMATRIX lightSpaceMatrix;
     DirectX::XMMATRIX inverseModel;
 };
 
@@ -116,7 +129,7 @@ static Transform sModelTransform
 
 struct Camera
 {
-    Vec3 location = { -1.38f, -2.44f, -29.2f };
+    Vec3 location = { -1.38f, 2.44f, -20.2f };
     Vec3 rotation = { 0.0f, 0.0f, 1.0f }; //imbardata, beccheggio, rollio, come negli aerei
     float FOV = 60.0f;
     float speed = 0.03f;
@@ -125,7 +138,7 @@ struct Camera
 struct LightSettings
 {
     Vec4 camPos;
-    Vec4 pos = { 0.9f, 0.0f, 0.6f };
+    Vec4 pos = { 25.0f, 22.0f, 24.0f };
     Vec4 ambientColor = { 0.1f, 0.1f, 0.1f, 1.0f };
     Vec4 lightColor = { 1.0f, 1.0f, 1.0f };
     float ambientStrength = 0.1f;
@@ -159,7 +172,7 @@ struct Mesh
 };
 
 static std::vector<Mesh> sMeshes;
-static uint32_t sMeshIndex = 0;
+static uint32_t sMeshIndex = 1; //default mesh
 
 void LoadMesh(const MeshVertex* vertData, const int vertCount, const uint32_t* indexData, const int indexCount, Mesh& outMesh)
 {
@@ -212,62 +225,26 @@ void LoadMesh(const std::string& meshPath, Mesh& outMesh)
     std::vector<uint32_t> indices;
     std::vector<SubMeshData> submeshes;
 
-# if 0
-
-    uint32_t vertexCount = attrib.vertices.size() / 3;
-
-    vertices.resize(vertexCount);
-    for (uint32_t i = 0; i < vertexCount; i++)
-    {
-        vertices[i].pos.x = attrib.vertices[i * 3 + 0];
-        vertices[i].pos.y = attrib.vertices[i * 3 + 1];
-        vertices[i].pos.z = attrib.vertices[i * 3 + 2];
-    }
-
-    for (uint32_t i = 0; i < shapes.size(); i++)
-    {
-        uint32_t indexCount = shapes[i].mesh.indices.size();
-        for (uint32_t j = 0; j < indexCount; j++)
-        {
-            auto index = shapes[i].mesh.indices[j];
-            MeshVertex& vertex = vertices[index.vertex_index];
-
-            // texture coordinates
-            if (index.texcoord_index != -1)
-            {
-                vertex.textureCoords.x = attrib.texcoords[index.texcoord_index * 2 + 0];
-                vertex.textureCoords.y = -attrib.texcoords[index.texcoord_index * 2 + 1];
-            }
-
-            indices.push_back(index.vertex_index);
-        }
-
-        SubMeshData& s = submeshes.emplace_back();
-        s.indexCount = indexCount;
-    }
-
-#else
-
     for (const auto& shape : shapes)
     {
-        for (const auto& boh : shape.mesh.indices)
+        for (const auto& index : shape.mesh.indices)
         {
             MeshVertex& v = vertices.emplace_back();
-            v.pos.x = attrib.vertices[3 * boh.vertex_index + 0];
-            v.pos.y = attrib.vertices[3 * boh.vertex_index + 1];
-            v.pos.z = attrib.vertices[3 * boh.vertex_index + 2];
+            v.pos.x = attrib.vertices[3 * index.vertex_index + 0];
+            v.pos.y = attrib.vertices[3 * index.vertex_index + 1];
+            v.pos.z = attrib.vertices[3 * index.vertex_index + 2];
 
-            if (boh.normal_index != -1)
+            if (index.normal_index != -1)
             {
-                v.normal.x = attrib.normals[3 * boh.normal_index + 0];
-                v.normal.y = attrib.normals[3 * boh.normal_index + 1];
-                v.normal.z = attrib.normals[3 * boh.normal_index + 2];
+                v.normal.x = attrib.normals[3 * index.normal_index + 0];
+                v.normal.y = attrib.normals[3 * index.normal_index + 1];
+                v.normal.z = attrib.normals[3 * index.normal_index + 2];
             }
 
-            if (boh.texcoord_index != -1)
+            if (index.texcoord_index != -1)
             {
-                v.textureCoords.x = attrib.texcoords[2 * boh.texcoord_index + 0];
-                v.textureCoords.y = -attrib.texcoords[2 * boh.texcoord_index + 1];
+                v.textureCoords.x = attrib.texcoords[2 * index.texcoord_index + 0];
+                v.textureCoords.y = -attrib.texcoords[2 * index.texcoord_index + 1];
             }
 
             indices.push_back(indices.size());
@@ -277,8 +254,6 @@ void LoadMesh(const std::string& meshPath, Mesh& outMesh)
         s.indexCount = shape.mesh.indices.size();
         s.texture = nullptr;
     }
-
-#endif
 
     ID3D11Buffer* vertexBuffer;
     ID3D11Buffer* indexBuffer;
@@ -386,6 +361,41 @@ void LoadSkyboxTexture(const std::vector<std::string>& texturePaths, ID3D11Textu
         stbi_image_free(s);
 }
 
+void SetDefaultViewport()
+{
+    // update viwpoert
+    D3D11_VIEWPORT viewport = {};
+    viewport.Width = gWindowWidth;
+    viewport.Height = gWindowHeight;
+    viewport.MaxDepth = 1.0f;
+    viewport.MinDepth = 0.0f;
+
+    gContext->RSSetViewports(1, &viewport);
+}
+
+void SetShadowMapiewport()
+{
+    // update viwpoert
+    D3D11_VIEWPORT viewport = {};
+    viewport.Width = shadowMapWidth;
+    viewport.Height = shadowMapHeight;
+    viewport.MaxDepth = 1.0f;
+    viewport.MinDepth = 0.0f;
+
+    gContext->RSSetViewports(1, &viewport);
+}
+
+void SetDefaultSamplerState()
+{
+    gContext->PSSetSamplers(0, 2, &sampler);
+    gContext->PSSetSamplers(1, 2, &shadowSampler);
+}
+
+void SetShadowSamplerState()
+{
+    gContext->PSSetSamplers(0, 1, &shadowSampler);
+}
+
 void Init()
 {
 #if defined( DEBUG ) || defined( _DEBUG )
@@ -407,8 +417,8 @@ void Init()
     swapchainDesc.Windowed = true;
     swapchainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
 
-    HRESULT swapchainHR = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, 0, D3D11_CREATE_DEVICE_DEBUG, 0, 0,
-        D3D11_SDK_VERSION, &swapchainDesc, &gSwapChain, &gDevice, 0, &gContext);
+    HRESULT swapchainHR = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_DEBUG, nullptr, 0,
+        D3D11_SDK_VERSION, &swapchainDesc, &gSwapChain, &gDevice, nullptr, &gContext);
 
     d3dcheck(swapchainHR);
 
@@ -435,13 +445,7 @@ void Init()
         d3dcheck(gDevice->CreateDepthStencilView(depthBuffer, nullptr, &gDepthBufferView));
         depthBuffer->Release();
 
-        D3D11_VIEWPORT viewport = {};
-        viewport.Width = gWindowWidth;
-        viewport.Height = gWindowHeight;
-        viewport.MaxDepth = 1.0f;
-        viewport.MinDepth = 0.0f;
-
-        gContext->RSSetViewports(1, &viewport);
+        SetDefaultViewport();
     }
     
     {
@@ -452,6 +456,48 @@ void Init()
         dssDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
 
         d3dcheck(gDevice->CreateDepthStencilState(&dssDesc, &gStencilStateSkybox));
+    }
+
+
+    // shadow mapping depth buffer
+    {
+
+//create shadow map texture desc
+        D3D11_TEXTURE2D_DESC texDesc = {};
+        texDesc.Width = shadowMapWidth;
+        texDesc.Height = shadowMapHeight;
+        texDesc.MipLevels = 1;
+        texDesc.ArraySize = 1;
+        texDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+        texDesc.SampleDesc.Count = 1;
+        texDesc.SampleDesc.Quality = 0;
+        texDesc.Usage = D3D11_USAGE_DEFAULT;
+        texDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+        texDesc.CPUAccessFlags = 0;
+        texDesc.MiscFlags = 0;
+
+        // Create the depth stencil view desc
+        D3D11_DEPTH_STENCIL_VIEW_DESC descDSV = {};
+        descDSV.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+        descDSV.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+        descDSV.Texture2D.MipSlice = 0;
+
+        //create shader resource view desc
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Texture2D.MipLevels = texDesc.MipLevels;
+        srvDesc.Texture2D.MostDetailedMip = 0;
+
+        //create texture and depth/resource views
+        ID3D11Texture2D* pShadowMap;
+        d3dcheck(gDevice->CreateTexture2D(&texDesc, nullptr, &pShadowMap));
+        d3dcheck(gDevice->CreateDepthStencilView(pShadowMap, &descDSV, &pShadowMapDepthView));
+        d3dcheck(gDevice->CreateShaderResourceView(pShadowMap, &srvDesc, &pShadowMapSRView));
+        pShadowMap->Release();
+
+
+
     }
 
     // vertex shader
@@ -518,8 +564,32 @@ void Init()
         psBlob->Release();
     }
 
-    // sampler for textures
-    ID3D11SamplerState* sampler;
+    // vertex and pixel shader for depth/shadow mapping
+    {
+
+        ID3DBlob* vsBlob;
+        d3dcheck(D3DCompileFromFile(L"shaders/shadow/depth_vertex.hlsl", nullptr, nullptr, "main", "vs_5_0", shaderCompileFlags, 0, &vsBlob, nullptr));
+        d3dcheck(gDevice->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &gShadowMappingVS));
+
+        D3D11_INPUT_ELEMENT_DESC inputs[1] = {};
+
+        inputs[0].SemanticName = "POSITION";
+        inputs[0].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+        inputs[0].AlignedByteOffset = 0;
+
+        d3dcheck(gDevice->CreateInputLayout(inputs, sizeof(inputs) / sizeof(D3D11_INPUT_ELEMENT_DESC), vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &inputLayoutShadowMap));
+
+
+        vsBlob->Release();
+
+        ID3DBlob* psBlob;
+        d3dcheck(D3DCompileFromFile(L"shaders/shadow/depth_pixel.hlsl", nullptr, nullptr, "main", "ps_5_0", shaderCompileFlags, 0, &psBlob, nullptr));
+        d3dcheck(gDevice->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &gShadowMappingPS));
+        psBlob->Release();
+
+
+
+    }
 
     D3D11_SAMPLER_DESC samplerDesc = {};
     samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -531,6 +601,22 @@ void Init()
     samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
     d3dcheck(gDevice->CreateSamplerState(&samplerDesc, &sampler));
+
+
+    D3D11_SAMPLER_DESC shadowSamplerDesc = {};
+    shadowSamplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    shadowSamplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+    shadowSamplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+    shadowSamplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+    shadowSamplerDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+    shadowSamplerDesc.BorderColor[0] = 0.0f;
+    shadowSamplerDesc.BorderColor[1] = 0.0f;
+    shadowSamplerDesc.BorderColor[2] = 0.0f;
+    shadowSamplerDesc.BorderColor[3] = 0.0f;
+    shadowSamplerDesc.MinLOD = 0;
+    shadowSamplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+    d3dcheck(gDevice->CreateSamplerState(&shadowSamplerDesc, &shadowSampler));
 
     // rasterizer state
     D3D11_RASTERIZER_DESC rasterDesc = {};
@@ -554,7 +640,7 @@ void Init()
 
 
     rasterDesc.FillMode = D3D11_FILL_SOLID;
-    rasterDesc.CullMode = D3D11_CULL_NONE;      
+    rasterDesc.CullMode = D3D11_CULL_NONE;      // SKYBOX
     d3dcheck(gDevice->CreateRasterizerState(&rasterDesc, &gRasterStateSkybox));
 
     // mvp buffer
@@ -584,7 +670,7 @@ void Init()
     gContext->VSSetConstantBuffers(0, 1, &gMVPBuffer);
     gContext->PSSetConstantBuffers(0, 1, &gLightBuffer);
 
-    gContext->PSSetSamplers(0, 1, &sampler);
+    SetDefaultSamplerState();
 
     gContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -595,7 +681,7 @@ void Init()
     LoadMesh("meshes/negan.obj", sMeshes.emplace_back());
     LoadMesh("meshes/terrain.obj", sMeshes.emplace_back());
 
-    // load textures
+    // load textures for meshes
     ID3D11Texture2D* dummy;
     LoadTexture("textures/dbd/0.png", dummy, sMeshes[0].submeshes[0].texture);
     LoadTexture("textures/dbd/1.png", dummy, sMeshes[0].submeshes[1].texture);
@@ -617,7 +703,8 @@ void Init()
     sMeshes[1].submeshes[0].texture = whiteTextRes;
     sMeshes[4].submeshes[0].texture = whiteTextRes;
 
-    {
+
+    { //skybox mesh and texture
         constexpr float side = 1.0f / 2.0f;
         MeshVertex skyboxVertices[] = {
         {{ -side,-side,-side }, {}, {} },
@@ -639,15 +726,13 @@ void Init()
                 0,1,4, 1,5,4 };
 
         auto& boxMesh = sMeshes.emplace_back();
-
         LoadMesh(skyboxVertices, 8, skyboxIndices, 36, boxMesh);
-
-        std::vector<std::string> surfaces = { "textures/sky/1.png", "textures/sky/0.png", "textures/sky/2.png", "textures/sky/3.png", "textures/sky/4.png", "textures/sky/5.png" };
+        std::vector<std::string> surfaces = { "textures/sky/0.png", "textures/sky/1.png", "textures/sky/2.png", "textures/sky/3.png", "textures/sky/4.png", "textures/sky/5.png" };
         LoadSkyboxTexture(surfaces, dummy, boxMesh.submeshes[0].texture);
     }
 
-    // set default mesh
-    sMeshIndex = 1;
+    LoadMesh("meshes/plane.obj", sMeshes.emplace_back());
+    LoadTexture("textures/floor.jpg", dummy, sMeshes[6].submeshes[0].texture);
 
     // imgui
     ImGui::CreateContext();
@@ -657,16 +742,16 @@ void Init()
 
     // physics
 
-    ///collision configuration contains default setup for memory, collision setup. Advanced users can create their own configuration.
+    //collision configuration contains default setup for memory, collision setup. Advanced users can create their own configuration.
     collisionConfiguration = new btDefaultCollisionConfiguration();
 
-    ///use the default collision dispatcher. For parallel processing you can use a diffent dispatcher (see Extras/BulletMultiThreaded)
+    //use the default collision dispatcher. For parallel processing you can use a diffent dispatcher (see Extras/BulletMultiThreaded)
     dispatcher = new btCollisionDispatcher(collisionConfiguration);
 
-    ///btDbvtBroadphase is a good general purpose broadphase. You can also try out btAxis3Sweep.
+    //btDbvtBroadphase is a good general purpose broadphase. You can also try out btAxis3Sweep.
     overlappingPairCache = new btDbvtBroadphase();
 
-    ///the default constraint solver. For parallel processing you can use a different solver (see Extras/BulletMultiThreaded)
+    //the default constraint solver. For parallel processing you can use a different solver (see Extras/BulletMultiThreaded)
     solver = new btSequentialImpulseConstraintSolver;
 
     dynamicsWorld = new btDiscreteDynamicsWorld(dispatcher, overlappingPairCache, solver, collisionConfiguration);
@@ -675,7 +760,7 @@ void Init()
 
     // physics - terrain TODO: semplificare
 
-    if constexpr (COLLIDER_MESH_INDEX == 4)
+    if constexpr (COLLIDER_MESH_INDEX == 4) //todo: caricamento fisica da vertici, da integrare quando si seleziona una nuova mesh
     {
         btTriangleMesh* triangleMesh = new btTriangleMesh();
 
@@ -702,6 +787,21 @@ void Init()
         t.setIdentity();
         t.setOrigin(btVector3(0, 0, 0));
 
+
+        /* TODO: questo pezzo da integrare quando si seleziona una nuova mesh e deve avere una massa
+         *
+         *btScalar mass(1.f);
+
+                 //rigidbody is dynamic if and only if mass is non zero, otherwise static
+            bool isDynamic = (mass != 0.f);
+
+            /*btVector3 localInertia(0, 0, 0);
+                 if (isDynamic)
+                     triangleShape->calculateLocalInertia(mass, localInertia);
+         *
+         */
+
+
         btDefaultMotionState* motion = new btDefaultMotionState(t);
 
         // Create the rigid body as before
@@ -723,7 +823,7 @@ void Init()
         btCollisionShape* colShape = new btBoxShape({ 0.5f, 0.5f, 0.5f });
         //collisionShapes.push_back(colShape);
 
-        /// Create Dynamic Objects
+        // Create Dynamic Objects
         btTransform startTransform;
         startTransform.setIdentity();
         startTransform.setOrigin({ 0, -2, 0 });
@@ -789,11 +889,13 @@ void Update()
     if (gKeyboard[KEY_SHIFT])
         sCamera.location.y -= sCamera.speed;
 
+    //mouse input for camera rotation
+
     // physics
 
     if (simulatePhysics)
     {
-        dynamicsWorld->stepSimulation(1.f / 60.f, 10);
+        dynamicsWorld->stepSimulation(1.f / 60.f, 10); // todo: framerate dinamico per evitare bug lentezza simulazione
         for (int j = dynamicsWorld->getNumCollisionObjects() - 1; j >= 0; j--)
         {
             btCollisionObject* obj = dynamicsWorld->getCollisionObjectArray()[j];
@@ -848,8 +950,7 @@ void ImguiRender()
     if (ImGui::Button("Start simulation"))
     {
         // "player" collider
-        {
-#if 1
+        {//TODO: create collision shape from mesh
             btCollisionShape* colShape = new btBoxShape(btVector3(sModelTransform.scale.x / 2.0f,
                 sModelTransform.scale.y / 2.0f,
                 sModelTransform.scale.z / 2.0f));
@@ -881,57 +982,6 @@ void ImguiRender()
 
             cubePhysShape = colShape;
             cubePhysRigidBody = body;
-
-#else
-            btTriangleMesh* triangleMesh = new btTriangleMesh();
-
-             const std::vector<MeshVertex>& vertices = sMeshes[sMeshIndex].vertices;
-             const std::vector<uint32_t>& indices = sMeshes[sMeshIndex].indices;
-
-             for (uint32_t i = 0; i < indices.size(); i += 3)
-             {
-                 const MeshVertex& v1 = vertices[indices[i + 0]];
-                 const MeshVertex& v2 = vertices[indices[i + 1]];
-                 const MeshVertex& v3 = vertices[indices[i + 2]];
-
-                 triangleMesh->addTriangle
-                 (
-                     btVector3(v1.pos.x, v1.pos.y, v1.pos.z),
-                     btVector3(v2.pos.x, v2.pos.y, v2.pos.z),
-                     btVector3(v3.pos.x, v3.pos.y, v3.pos.z)
-                 );
-             }
-
-             btBvhTriangleMeshShape* triangleShape = new btBvhTriangleMeshShape(triangleMesh, false);
-
-             btTransform t;
-             t.setIdentity();
-             t.setOrigin(btVector3(0, 0, 0));
-
-             btScalar mass(1.f);
-
-                 //rigidbody is dynamic if and only if mass is non zero, otherwise static
-            bool isDynamic = (mass != 0.f);
-
-            /*btVector3 localInertia(0, 0, 0);
-                 if (isDynamic)
-                     triangleShape->calculateLocalInertia(mass, localInertia);*/
-
-             btDefaultMotionState* motion = new btDefaultMotionState(t);
-
-             // Create the rigid body as before
-             btRigidBody::btRigidBodyConstructionInfo info(0.0, motion, triangleShape, btVector3(0, 0, 0));
-             info.m_friction = 3.0f;
-
-             btRigidBody* meshRigidBody = new btRigidBody(info);
-
-             triangleShape->setLocalScaling(btVector3(1, 1, 1));
-
-             dynamicsWorld->addRigidBody(meshRigidBody);
-
-             cubePhysShape = triangleShape;
-             cubePhysRigidBody = meshRigidBody;
-#endif
         }
         dynamicsWorld->addRigidBody(cubePhysRigidBody);
         simulatePhysics = true;
@@ -1002,15 +1052,8 @@ void ImguiRender()
 
 void Render()
 {
-    //float clearColor[] = { sSceneSettings.color.x, sSceneSettings.color.y, sSceneSettings.color.z, sSceneSettings.color.w };
     gContext->ClearRenderTargetView(gBackBufferView, &sSceneSettings.color.x);
     gContext->ClearDepthStencilView(gDepthBufferView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0.0f);
-
-    ImGui_ImplWin32_NewFrame();
-    ImGui_ImplDX11_NewFrame();
-    ImGui::NewFrame();
-
-    ImguiRender();
 
     // camera
     MVPBuffer mvp;
@@ -1018,13 +1061,145 @@ void Render()
     mvp.model = DirectX::XMMatrixIdentity();
     mvp.inverseModel = DirectX::XMMatrixIdentity();
 
+    mvp.view = DirectX::XMMatrixLookAtLH
+    (
+        { sLightSettings.pos.x, sLightSettings.pos.y, sLightSettings.pos.z, 1.0f },
+        { 0.0f, 0.0f, 0.0f, 1.0f },
+        { 0.0f, 1.0f, 0.0f, 0.0f }
+    );
+    mvp.proj = DirectX::XMMatrixOrthographicOffCenterLH(-15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 1000.0f);
+
+    DirectX::XMMATRIX textureTransform = DirectX::XMMatrixScaling(0.5f, -0.5f, 1.0f) * DirectX::XMMatrixTranslation(0.5f, 0.5f, 0.0f);
+
+    mvp.lightSpaceMatrix = XMMatrixTranspose(mvp.view * mvp.proj);
+    //mvp.view = XMMatrixTranspose(mvp.view);
+    //mvp.proj = XMMatrixTranspose(mvp.proj);
+
+
+    /**
+     * FIRST PASS, SHADOW MAPPING
+     *
+     *
+     */
+
+    {
+
+    // bind shadow mapping render target
+    
+    gContext->ClearDepthStencilView(pShadowMapDepthView, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    gContext->OMSetRenderTargets(0, nullptr, pShadowMapDepthView);
+    //gContext->OMSetRenderTargets(1, &gBackBufferView, gDepthBufferView);
+
+    SetShadowMapiewport();
+    SetShadowSamplerState();
+
+    //// update mvp
+    //DirectX::XMMATRIX model = DirectX::XMMatrixScaling(1, 1, 1)
+    //    * DirectX::XMMatrixTranslation(sLightSettings.pos.x, sLightSettings.pos.y, sLightSettings.pos.z);
+
+    //mvp.model = DirectX::XMMatrixTranspose(model);
+    //mvp.inverseModel = DirectX::XMMatrixInverse(nullptr, model);
+
+    //D3D11_MAPPED_SUBRESOURCE mvpMap;
+    //d3dcheck(gContext->Map(gMVPBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mvpMap));
+    //memcpy(mvpMap.pData, &mvp, sizeof(MVPBuffer));
+    //gContext->Unmap(gMVPBuffer, 0);
+
+
+    // update mvp
+    DirectX::XMMATRIX model =
+        DirectX::XMMatrixScaling(sModelTransform.scale.x, sModelTransform.scale.y, sModelTransform.scale.z)
+        *
+        DirectX::XMMatrixRotationQuaternion(sModelTransform.rotation.get128())
+        * //TODO!!!!! LE COORDINATE SONO INVERTITE PER TEST, DA FIXARE
+        DirectX::XMMatrixTranslation(sModelTransform.location.x, sModelTransform.location.y, sModelTransform.location.z);
+
+    mvp.model = DirectX::XMMatrixTranspose(model);
+
+        D3D11_MAPPED_SUBRESOURCE mvpMap;
+    d3dcheck(gContext->Map(gMVPBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mvpMap));
+    memcpy(mvpMap.pData, &mvp, sizeof(MVPBuffer));
+    gContext->Unmap(gMVPBuffer, 0);
+
+    uint32_t strides[] = { sizeof(MeshVertex) };
+    uint32_t offsets[] = { 0 };
+    gContext->IASetVertexBuffers(0, 1, &sMeshes[sMeshIndex].vertexBuffer, strides, offsets);
+    gContext->IASetIndexBuffer(sMeshes[sMeshIndex].indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+    gContext->RSSetState(nullptr);
+    // bind shadow mapping shaders
+    gContext->VSSetShader(gShadowMappingVS, nullptr, 0);
+    gContext->PSSetShader(gShadowMappingPS, nullptr, 0);
+    gContext->PSSetShaderResources(0, 1, &pShadowMapSRView); //gli passo la shadow map (texture unit 1)
+
+    gContext->IASetInputLayout(inputLayoutShadowMap);
+    // render selected mesh
+    uint32_t indexOffset = 0;
+    for (SubMeshData s : sMeshes[sMeshIndex].submeshes)
+    {
+        gContext->DrawIndexed(s.indexCount, indexOffset, 0);
+        indexOffset += s.indexCount;
+    }
+
+
+
+    // update mvp
+    model =  DirectX::XMMatrixTranslation(0, -2, 0);
+
+    mvp.model = DirectX::XMMatrixTranspose(model);
+    mvp.inverseModel = DirectX::XMMatrixInverse(nullptr, model);
+    d3dcheck(gContext->Map(gMVPBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mvpMap));
+    memcpy(mvpMap.pData, &mvp, sizeof(MVPBuffer));
+    gContext->Unmap(gMVPBuffer, 0);
+
+
+    gContext->IASetVertexBuffers(0, 1, &sMeshes[6].vertexBuffer, strides, offsets);
+    gContext->IASetIndexBuffer(sMeshes[6].indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+    gContext->RSSetState(nullptr);
+    // bind shadow mapping shaders
+    gContext->VSSetShader(gShadowMappingVS, nullptr, 0);
+    gContext->PSSetShader(gShadowMappingPS, nullptr, 0);
+    gContext->PSSetShaderResources(0, 1, &pShadowMapSRView); //gli passo la shadow map (texture unit 1)
+    gContext->IASetInputLayout(inputLayoutShadowMap);
+    // render floor
+    indexOffset = 0;
+    for (SubMeshData s : sMeshes[6].submeshes)
+    {
+        gContext->DrawIndexed(s.indexCount, indexOffset, 0);
+        indexOffset += s.indexCount;
+    }
+}
+
+    ImGui_ImplWin32_NewFrame();
+    ImGui_ImplDX11_NewFrame();
+    ImGui::NewFrame();
+
+    ImguiRender();
+
+    mvp.lightSpaceMatrix = XMMatrixTranspose(mvp.view * mvp.proj  * textureTransform);
+
+#if 1
+    /**
+ * SECOND PASS, DEFAULT RENDERING
+ *
+ *
+ */
+
+    gContext->ClearRenderTargetView(gBackBufferView, &sSceneSettings.color.x);
+    gContext->ClearDepthStencilView(gDepthBufferView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0.0f);
+
+    SetDefaultViewport();
+    SetDefaultSamplerState();
+
+ // bind backbuffer
+    gContext->OMSetRenderTargets(1, &gBackBufferView, gDepthBufferView);
+
     mvp.view = XMMatrixTranspose(DirectX::XMMatrixLookToLH
     (
         { sCamera.location.x, sCamera.location.y, sCamera.location.z },
         { sCamera.rotation.x, sCamera.rotation.y, sCamera.rotation.z },
         { 0.0f, 1.0f, 0.0f }
     ));
-    
+
     mvp.proj = XMMatrixTranspose(DirectX::XMMatrixPerspectiveFovLH(sCamera.FOV * TO_RADIANS, (float)gWindowWidth / (float)gWindowHeight, 0.01f, 1000.0f));
 
 
@@ -1036,16 +1211,19 @@ void Render()
     memcpy(lightMap.pData, &sLightSettings, sizeof(LightSettings));
     gContext->Unmap(gLightBuffer, 0);
 
-    gContext->VSSetShader(vertexShaderSkybox, nullptr, 0);
-    gContext->OMSetDepthStencilState(gStencilStateSkybox, 0);
-    gContext->IASetInputLayout(inputLayoutSkybox);
 
-    // skybox
+
+
+    gContext->VSSetShader(vertexShaderDefault, nullptr, 0);
+    gContext->IASetInputLayout(inputLayout);
+    gContext->OMSetDepthStencilState(nullptr, 0);
+
+
+    //floor //TODO: abstract pls
     {
-
         // update mvp
-        DirectX::XMMATRIX model = DirectX::XMMatrixScaling(1000, 1000, 1000)
-                                * DirectX::XMMatrixTranslation(sCamera.location.x, sCamera.location.y, sCamera.location.z);
+        DirectX::XMMATRIX model = DirectX::XMMatrixScaling(1, 1, 1)
+            * DirectX::XMMatrixTranslation(0, -2, 0);
 
         mvp.model = DirectX::XMMatrixTranspose(model);
         mvp.inverseModel = DirectX::XMMatrixInverse(nullptr, model);
@@ -1058,26 +1236,23 @@ void Render()
         // bind everything
         uint32_t strides[] = { sizeof(MeshVertex) };
         uint32_t offsets[] = { 0 };
-        gContext->IASetVertexBuffers(0, 1, &sMeshes[5].vertexBuffer, strides, offsets);
-
-        gContext->IASetIndexBuffer(sMeshes[5].indexBuffer, DXGI_FORMAT_R32_UINT, 0);
-
-        gContext->PSSetShader(gPixelShaderSkybox, nullptr, 0);
-        gContext->RSSetState(gRasterStateSkybox);
+        gContext->IASetVertexBuffers(0, 1, &sMeshes[6].vertexBuffer, strides, offsets);
+        gContext->IASetIndexBuffer(sMeshes[6].indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+        gContext->PSSetShader(gPixelShaderDefault, nullptr, 0);
+        gContext->RSSetState(gRasterStateDefault);
 
         // render
         uint32_t indexOffset = 0;
-        for (SubMeshData s : sMeshes[5].submeshes)
+        for (SubMeshData s : sMeshes[6].submeshes)
         {
             gContext->PSSetShaderResources(0, 1, &s.texture);
+            gContext->PSSetShaderResources(1, 1, &pShadowMapSRView);
             gContext->DrawIndexed(s.indexCount, indexOffset, 0);
             indexOffset += s.indexCount;
         }
     }
 
-    gContext->VSSetShader(vertexShaderDefault, nullptr, 0);
-    gContext->IASetInputLayout(inputLayout);
-    gContext->OMSetDepthStencilState(nullptr, 0);
+
 
 
     // default scene
@@ -1112,11 +1287,53 @@ void Render()
         for (SubMeshData s : sMeshes[sMeshIndex].submeshes)
         {
             gContext->PSSetShaderResources(0, 1, &s.texture);
+            gContext->PSSetShaderResources(1, 1, &pShadowMapSRView); //gli passo la shadow map (texture unit 1)
             gContext->DrawIndexed(s.indexCount, indexOffset, 0);
             indexOffset += s.indexCount;
         }
     }
 
+
+    // skybox //TODO: skybox da renderizzare per ultimo
+    {
+        gContext->VSSetShader(vertexShaderSkybox, nullptr, 0);
+        gContext->OMSetDepthStencilState(gStencilStateSkybox, 0);
+        gContext->IASetInputLayout(inputLayoutSkybox);
+
+        // update mvp
+        DirectX::XMMATRIX model = DirectX::XMMatrixScaling(1000, 1000, 1000)
+            * DirectX::XMMatrixTranslation(sCamera.location.x, sCamera.location.y, sCamera.location.z);
+
+        mvp.model = DirectX::XMMatrixTranspose(model);
+        mvp.inverseModel = DirectX::XMMatrixInverse(nullptr, model);
+
+        D3D11_MAPPED_SUBRESOURCE mvpMap;
+        d3dcheck(gContext->Map(gMVPBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mvpMap));
+        memcpy(mvpMap.pData, &mvp, sizeof(MVPBuffer));
+        gContext->Unmap(gMVPBuffer, 0);
+
+        // bind everything
+        uint32_t strides[] = { sizeof(MeshVertex) };
+        uint32_t offsets[] = { 0 };
+        gContext->IASetVertexBuffers(0, 1, &sMeshes[5].vertexBuffer, strides, offsets);
+
+        gContext->IASetIndexBuffer(sMeshes[5].indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+
+        gContext->PSSetShader(gPixelShaderSkybox, nullptr, 0);
+        gContext->RSSetState(gRasterStateSkybox);
+
+        // render
+        uint32_t indexOffset = 0;
+        for (SubMeshData s : sMeshes[5].submeshes)
+        {
+            gContext->PSSetShaderResources(0, 1, &s.texture);
+            gContext->DrawIndexed(s.indexCount, indexOffset, 0);
+            indexOffset += s.indexCount;
+        }
+    }
+#endif
+
+#if 0 //TODO: to reenable
     // collider
     {
         // update mvp
@@ -1156,6 +1373,7 @@ void Render()
             indexOffset += s.indexCount;
         }
     }
+#endif
 
     ImGui::Render();
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
@@ -1215,14 +1433,7 @@ LRESULT WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
                 d3dcheck(gDevice->CreateDepthStencilView(depthBuffer, nullptr, &gDepthBufferView));
                 depthBuffer->Release();
 
-                // update viwpoert
-                D3D11_VIEWPORT viewport = {};
-                viewport.Width = gWindowWidth;
-                viewport.Height = gWindowHeight;
-                viewport.MaxDepth = 1.0f;
-                viewport.MinDepth = 0.0f;
-
-                gContext->RSSetViewports(1, &viewport);
+                SetDefaultViewport();
 
                 // set updated render targets
                 gContext->OMSetRenderTargets(1, &gBackBufferView, gDepthBufferView);
@@ -1239,6 +1450,7 @@ LRESULT WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 
     return DefWindowProcA(hWnd, Msg, wParam, lParam);
 }
+
 
 int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hInstPrev, PSTR cmdline, int cmdshow)
 {
