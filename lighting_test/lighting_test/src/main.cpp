@@ -610,10 +610,10 @@ void Init()
     shadowSamplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
     shadowSamplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
     shadowSamplerDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
-    shadowSamplerDesc.BorderColor[0] = 0.0f;
-    shadowSamplerDesc.BorderColor[1] = 0.0f;
-    shadowSamplerDesc.BorderColor[2] = 0.0f;
-    shadowSamplerDesc.BorderColor[3] = 0.0f;
+    shadowSamplerDesc.BorderColor[0] = 1.0f;
+    shadowSamplerDesc.BorderColor[1] = 1.0f;
+    shadowSamplerDesc.BorderColor[2] = 1.0f;
+    shadowSamplerDesc.BorderColor[3] = 1.0f;
     shadowSamplerDesc.MinLOD = 0;
     shadowSamplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
@@ -1148,7 +1148,8 @@ void Render()
 
 
     // update mvp
-    model =  DirectX::XMMatrixTranslation(0, -2, 0);
+    model = DirectX::XMMatrixScaling(10, 1, 10) *  
+        DirectX::XMMatrixTranslation(0, -2, 0);
 
     mvp.model = DirectX::XMMatrixTranspose(model);
     mvp.inverseModel = DirectX::XMMatrixInverse(nullptr, model);
@@ -1227,7 +1228,7 @@ void Render()
     //floor //TODO: abstract pls
     {
         // update mvp
-        DirectX::XMMATRIX model = DirectX::XMMatrixScaling(1, 1, 1)
+        DirectX::XMMATRIX model = DirectX::XMMatrixScaling(10, 1, 10)
             * DirectX::XMMatrixTranslation(0, -2, 0);
 
         mvp.model = DirectX::XMMatrixTranspose(model);
