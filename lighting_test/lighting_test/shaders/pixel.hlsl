@@ -34,15 +34,12 @@ cbuffer LightSettings : register(b0)
 float ShadowCalculation(float4 fragPosLightSpace)
 {
     float3 projCoords = (fragPosLightSpace.xyz / fragPosLightSpace.w);
-    //projCoords = projCoords * 0.5f + 0.5f;
-
     float currentDepth = projCoords.z;
-
     float closestDepth = depthMap.SampleCmpLevelZero(samplerShadow0, projCoords.xy, currentDepth).r;
-    
-    float shadow = currentDepth > closestDepth ? 1.0f : 0.0f;
-    
+    //float closestDepth = depthMap.Sample(sampler0, projCoords.xy).r;
+    //float shadow = currentDepth > closestDepth ? 0.0f : 1.0f;
     return closestDepth;
+    //return shadow;
 }
 
 float4 main(VertexOutput v) : SV_Target0
@@ -64,15 +61,15 @@ float4 main(VertexOutput v) : SV_Target0
     float spec = pow(max(dot(viewDir, reflectDir), 0.0f), specularPow0);
     float3 specular = specularStrength0 * spec * lightColor0.xyz;
 
-
+    //attenutation
     float distance = length(lightPos - v.worldPos);
-    //float attenuation = 1.0 / (constant0 + linear0 * distance + quadratic0 * pow(distance, 2));
+    float attenuation = 1.0 / (constant0 + linear0 * distance + quadratic0 * pow(distance, 2));
+//TODO: questi valori di attenuazione sono da rivedere con la nuova mappa di profondità per la shadow map, siccome rendono tutto nero al momento
     //ambientLight *= attenuation;
     //diffuse *= attenuation;
     //specular *= attenuation;
 
-    float shadow = ShadowCalculation(v.posLightSpace);
-    //float shadow = depthMap.SampleCmpLevelZero(samplerShadow0, float2(v.posLightSpace.xy / v.posLightSpace.w), float(v.posLightSpace.z / v.posLightSpace.w));
-    
-    return float4(textureSample * (ambientLight + (1.0f + shadow) * (diffuse + specular)), 1.0f);
+    float isInShadow = ShadowCalculation(v.posLightSpace);
+
+    return float4(textureSample * (ambientLight + (1.0f + isInShadow) * (diffuse + specular)), 1.0f);
 }
