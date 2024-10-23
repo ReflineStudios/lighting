@@ -47,6 +47,7 @@ ID3D11Buffer* gLightBuffer = nullptr;
 ID3D11RasterizerState* gRasterStateDefault = nullptr;
 ID3D11RasterizerState* gRasterStateWireframe = nullptr;
 ID3D11RasterizerState* gRasterStateSkybox = nullptr;
+ID3D11RasterizerState* gRasterStateShadowMapping = nullptr;
 
 ID3D11PixelShader* gPixelShaderDefault = nullptr;
 ID3D11PixelShader* gPixelShaderCollider = nullptr;
@@ -643,6 +644,10 @@ void Init()
     rasterDesc.CullMode = D3D11_CULL_NONE;      // SKYBOX
     d3dcheck(gDevice->CreateRasterizerState(&rasterDesc, &gRasterStateSkybox));
 
+    rasterDesc.FillMode = D3D11_FILL_SOLID;
+    rasterDesc.CullMode = D3D11_CULL_FRONT;      // SHAODW MAPPING, facciamo un culling inverso così l'ombra proiettata è quella della faccia non visibile, per cui risolve la shadow acne essendo più indietro l'ombra proiettata rispetto alla faccia frontale visibile
+    d3dcheck(gDevice->CreateRasterizerState(&rasterDesc, &gRasterStateShadowMapping));
+
     // mvp buffer
     D3D11_BUFFER_DESC mvpBufferDesc = {};
     mvpBufferDesc.ByteWidth = sizeof(MVPBuffer);
@@ -1125,7 +1130,7 @@ void Render()
     uint32_t offsets[] = { 0 };
     gContext->IASetVertexBuffers(0, 1, &sMeshes[sMeshIndex].vertexBuffer, strides, offsets);
     gContext->IASetIndexBuffer(sMeshes[sMeshIndex].indexBuffer, DXGI_FORMAT_R32_UINT, 0);
-    gContext->RSSetState(nullptr);
+    gContext->RSSetState(gRasterStateShadowMapping);
     // bind shadow mapping shaders
     gContext->VSSetShader(gShadowMappingVS, nullptr, 0);
     gContext->PSSetShader(gShadowMappingPS, nullptr, 0);
@@ -1154,7 +1159,7 @@ void Render()
 
     gContext->IASetVertexBuffers(0, 1, &sMeshes[6].vertexBuffer, strides, offsets);
     gContext->IASetIndexBuffer(sMeshes[6].indexBuffer, DXGI_FORMAT_R32_UINT, 0);
-    gContext->RSSetState(nullptr);
+    gContext->RSSetState(gRasterStateShadowMapping);
     // bind shadow mapping shaders
     gContext->VSSetShader(gShadowMappingVS, nullptr, 0);
     gContext->PSSetShader(gShadowMappingPS, nullptr, 0);
